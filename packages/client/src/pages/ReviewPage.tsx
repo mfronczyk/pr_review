@@ -3,7 +3,7 @@
  * Shows file diffs with tag-based grouping sidebar and chunk review controls.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import * as api from '@/api';
@@ -224,7 +224,7 @@ function FileTreeNode({
 
 // ── Sidebar ─────────────────────────────────────────────────
 
-function Sidebar({
+const Sidebar = memo(function Sidebar({
   pr,
   groups,
   files,
@@ -392,7 +392,7 @@ function Sidebar({
       </div>
     </aside>
   );
-}
+});
 
 // ── Toolbar ─────────────────────────────────────────────────
 
@@ -518,14 +518,14 @@ export function ReviewPage(): React.ReactElement {
   }, [reloadPr, reloadChunks]);
 
   /** Wraps an async action with error handling. */
-  async function withErrorHandling(fn: () => Promise<void>): Promise<void> {
+  const withErrorHandling = useCallback(async (fn: () => Promise<void>): Promise<void> => {
     setActionError(null);
     try {
       await fn();
     } catch (err: unknown) {
       setActionError(err instanceof Error ? err.message : String(err));
     }
-  }
+  }, []);
 
   // Build groups from tag assignments
   const groups = useMemo((): GroupInfo[] => {
@@ -551,6 +551,19 @@ export function ReviewPage(): React.ReactElement {
     for (const c of chunks) seen.add(c.filePath);
     return Array.from(seen).sort();
   }, [chunks]);
+
+  // Derive PR progress from local chunks state — avoids refetching PR on every toggle
+  const prWithLocalProgress = useMemo((): PrWithProgress | null => {
+    if (!pr) return null;
+    if (!chunks) return pr;
+    const totalChunks = chunks.length;
+    const reviewedChunks = chunks.filter((c) => c.reviewed).length;
+    // Return same reference if counts haven't changed
+    if (pr.totalChunks === totalChunks && pr.reviewedChunks === reviewedChunks) {
+      return pr;
+    }
+    return { ...pr, totalChunks, reviewedChunks };
+  }, [pr, chunks]);
 
   // Filter chunks based on active filter and hide-reviewed toggle
   const filteredChunks = useMemo((): ChunkWithDetails[] => {
@@ -587,89 +600,106 @@ export function ReviewPage(): React.ReactElement {
     setAnalyzing(false);
   }
 
-  async function handleToggleReviewed(chunkId: number): Promise<void> {
-    // Optimistically toggle the reviewed state locally
-    setChunks((prev) => {
-      if (!prev) return prev;
-      return prev.map((c) => (c.id === chunkId ? { ...c, reviewed: !c.reviewed } : c));
-    });
-    await withErrorHandling(async () => {
-      await api.toggleReviewed(chunkId);
-      // Only refresh the PR progress bar, not the full chunks list
-      reloadPr();
-    });
-  }
-
-  async function handleBulkApprove(tagId: number): Promise<void> {
-    // Optimistically mark all chunks with this tag as reviewed
-    setChunks((prev) => {
-      if (!prev) return prev;
-      return prev.map((c) => (c.tags.some((t) => t.id === tagId) ? { ...c, reviewed: true } : c));
-    });
-    await withErrorHandling(async () => {
-      await api.bulkApprove(prId, tagId);
-      reloadPr();
-    });
-  }
-
-  async function handleAddComment(chunkId: number, body: string): Promise<void> {
-    await withErrorHandling(async () => {
-      const comment = await api.createComment({ chunkId, prId, body });
-      // Optimistically add the comment to local state
+  const handleToggleReviewed = useCallback(
+    async (chunkId: number): Promise<void> => {
+      // Optimistically toggle the reviewed state locally
       setChunks((prev) => {
         if (!prev) return prev;
-        return prev.map((c) =>
-          c.id === chunkId ? { ...c, comments: [...c.comments, comment] } : c,
-        );
+        return prev.map((c) => (c.id === chunkId ? { ...c, reviewed: !c.reviewed } : c));
       });
-    });
-  }
+      await withErrorHandling(async () => {
+        await api.toggleReviewed(chunkId);
+        // No reloadPr() — progress is derived from local chunks state
+      });
+    },
+    [withErrorHandling],
+  );
 
-  async function handleUpdateComment(commentId: number, body: string): Promise<void> {
-    await withErrorHandling(async () => {
-      const updated = await api.updateComment(commentId, body);
+  const handleBulkApprove = useCallback(
+    async (tagId: number): Promise<void> => {
+      // Optimistically mark all chunks with this tag as reviewed
       setChunks((prev) => {
         if (!prev) return prev;
-        return prev.map((c) => ({
-          ...c,
-          comments: c.comments.map((cm) => (cm.id === commentId ? updated : cm)),
-        }));
+        return prev.map((c) => (c.tags.some((t) => t.id === tagId) ? { ...c, reviewed: true } : c));
       });
-    });
-  }
+      await withErrorHandling(async () => {
+        await api.bulkApprove(prId, tagId);
+        // No reloadPr() — progress is derived from local chunks state
+      });
+    },
+    [prId, withErrorHandling],
+  );
 
-  async function handleDeleteComment(commentId: number): Promise<void> {
-    await withErrorHandling(async () => {
-      await api.deleteComment(commentId);
-      setChunks((prev) => {
-        if (!prev) return prev;
-        return prev.map((c) => ({
-          ...c,
-          comments: c.comments.filter((cm) => cm.id !== commentId),
-        }));
+  const handleAddComment = useCallback(
+    async (chunkId: number, body: string): Promise<void> => {
+      await withErrorHandling(async () => {
+        const comment = await api.createComment({ chunkId, prId, body });
+        // Optimistically add the comment to local state
+        setChunks((prev) => {
+          if (!prev) return prev;
+          return prev.map((c) =>
+            c.id === chunkId ? { ...c, comments: [...c.comments, comment] } : c,
+          );
+        });
       });
-    });
-  }
+    },
+    [prId, withErrorHandling],
+  );
 
-  async function handlePublishComment(commentId: number): Promise<void> {
-    if (!pr) return;
-    await withErrorHandling(async () => {
-      const published = await api.publishComment(commentId, {
-        owner: pr.owner,
-        repo: pr.repo,
-        prNumber: pr.number,
-        ghHost: pr.ghHost !== 'github.com' ? pr.ghHost : undefined,
-        commitSha: pr.headSha,
+  const handleUpdateComment = useCallback(
+    async (commentId: number, body: string): Promise<void> => {
+      await withErrorHandling(async () => {
+        const updated = await api.updateComment(commentId, body);
+        setChunks((prev) => {
+          if (!prev) return prev;
+          return prev.map((c) => ({
+            ...c,
+            comments: c.comments.map((cm) => (cm.id === commentId ? updated : cm)),
+          }));
+        });
       });
-      setChunks((prev) => {
-        if (!prev) return prev;
-        return prev.map((c) => ({
-          ...c,
-          comments: c.comments.map((cm) => (cm.id === commentId ? published : cm)),
-        }));
+    },
+    [withErrorHandling],
+  );
+
+  const handleDeleteComment = useCallback(
+    async (commentId: number): Promise<void> => {
+      await withErrorHandling(async () => {
+        await api.deleteComment(commentId);
+        setChunks((prev) => {
+          if (!prev) return prev;
+          return prev.map((c) => ({
+            ...c,
+            comments: c.comments.filter((cm) => cm.id !== commentId),
+          }));
+        });
       });
-    });
-  }
+    },
+    [withErrorHandling],
+  );
+
+  const handlePublishComment = useCallback(
+    async (commentId: number): Promise<void> => {
+      if (!pr) return;
+      await withErrorHandling(async () => {
+        const published = await api.publishComment(commentId, {
+          owner: pr.owner,
+          repo: pr.repo,
+          prNumber: pr.number,
+          ghHost: pr.ghHost !== 'github.com' ? pr.ghHost : undefined,
+          commitSha: pr.headSha,
+        });
+        setChunks((prev) => {
+          if (!prev) return prev;
+          return prev.map((c) => ({
+            ...c,
+            comments: c.comments.map((cm) => (cm.id === commentId ? published : cm)),
+          }));
+        });
+      });
+    },
+    [pr, withErrorHandling],
+  );
 
   async function handlePublishAll(): Promise<void> {
     if (!pr) return;
@@ -691,6 +721,29 @@ export function ReviewPage(): React.ReactElement {
     return chunks.reduce((acc, c) => acc + c.comments.filter((cm) => !cm.publishedAt).length, 0);
   }, [chunks]);
 
+  // Stable callback refs for Sidebar — avoids re-renders from inline arrow functions
+  const handleFilterByTag = useCallback(
+    (name: string) =>
+      setActiveFilter((f) =>
+        f?.type === 'tag' && f.value === name ? null : { type: 'tag', value: name },
+      ),
+    [],
+  );
+
+  const handleFilterByFile = useCallback(
+    (path: string) =>
+      setActiveFilter((f) =>
+        f?.type === 'file' && f.value === path ? null : { type: 'file', value: path },
+      ),
+    [],
+  );
+
+  const handleClearFilter = useCallback(() => setActiveFilter(null), []);
+
+  const handleDismissError = useCallback(() => setActionError(null), []);
+
+  const handleToggleHideReviewed = useCallback(() => setHideReviewed((h) => !h), []);
+
   const loading = prLoading || chunksLoading;
   const error = prError || chunksError;
 
@@ -700,7 +753,7 @@ export function ReviewPage(): React.ReactElement {
     );
   }
 
-  if (error || !pr) {
+  if (error || !prWithLocalProgress) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-2">
         <p className="text-red-500">{error ?? 'PR not found'}</p>
@@ -714,32 +767,22 @@ export function ReviewPage(): React.ReactElement {
   return (
     <div className="flex h-[calc(100vh-49px)]">
       <Sidebar
-        pr={pr}
+        pr={prWithLocalProgress}
         groups={groups}
         files={files}
         activeFilter={activeFilter}
-        onFilterByTag={(name) =>
-          setActiveFilter((f) =>
-            f?.type === 'tag' && f.value === name ? null : { type: 'tag', value: name },
-          )
-        }
-        onFilterByFile={(path) =>
-          setActiveFilter((f) =>
-            f?.type === 'file' && f.value === path ? null : { type: 'file', value: path },
-          )
-        }
-        onClearFilter={() => setActiveFilter(null)}
+        onFilterByTag={handleFilterByTag}
+        onFilterByFile={handleFilterByFile}
+        onClearFilter={handleClearFilter}
         onBulkApprove={handleBulkApprove}
       />
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        {actionError && (
-          <ErrorBanner message={actionError} onDismiss={() => setActionError(null)} />
-        )}
+        {actionError && <ErrorBanner message={actionError} onDismiss={handleDismissError} />}
 
         <Toolbar
           hideReviewed={hideReviewed}
-          onToggleHideReviewed={() => setHideReviewed((h) => !h)}
+          onToggleHideReviewed={handleToggleHideReviewed}
           onSync={handleSync}
           onAnalyze={handleAnalyze}
           onPublishAll={handlePublishAll}

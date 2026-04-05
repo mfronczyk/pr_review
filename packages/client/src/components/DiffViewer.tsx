@@ -5,7 +5,7 @@
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { InlineComment } from '@/components/InlineComment';
 import type { ChunkWithDetails } from '@pr-review/shared';
@@ -273,30 +273,34 @@ function ChunkBlock({
       return;
     }
 
+    if (!chunk.reviewed) {
+      // Expanding: set collapsed=false so the content div renders,
+      // then the second useEffect handles the expand animation.
+      // Must happen before the el check — contentRef is null while collapsed.
+      setCollapsed(false);
+      return;
+    }
+
+    // Collapsing: animate height to 0, then set collapsed=true
     const el = contentRef.current;
     if (!el) return;
 
-    if (chunk.reviewed) {
-      // Collapsing: set explicit height, then transition to 0
-      const height = el.scrollHeight;
-      el.style.height = `${height}px`;
-      el.style.transition = 'none';
-      // Force reflow
-      void el.offsetHeight;
-      el.style.transition = `height ${COLLAPSE_DURATION_MS}ms ease-in-out, opacity ${COLLAPSE_DURATION_MS}ms ease-in-out`;
-      el.style.height = '0px';
-      el.style.opacity = '0';
+    const height = el.scrollHeight;
+    el.style.height = `${height}px`;
+    el.style.transition = 'none';
+    // Force reflow
+    void el.offsetHeight;
+    el.style.transition = `height ${COLLAPSE_DURATION_MS}ms ease-in-out, opacity ${COLLAPSE_DURATION_MS}ms ease-in-out`;
+    el.style.height = '0px';
+    el.style.opacity = '0';
 
-      const timer = setTimeout(() => {
-        setCollapsed(true);
-        el.style.transition = '';
-        el.style.height = '';
-        el.style.opacity = '';
-      }, COLLAPSE_DURATION_MS);
-      return () => clearTimeout(timer);
-    }
-    // Expanding: show content, measure, animate from 0
-    setCollapsed(false);
+    const timer = setTimeout(() => {
+      setCollapsed(true);
+      el.style.transition = '';
+      el.style.height = '';
+      el.style.opacity = '';
+    }, COLLAPSE_DURATION_MS);
+    return () => clearTimeout(timer);
   }, [chunk.reviewed]);
 
   // Handle expand animation after collapsed becomes false
@@ -411,7 +415,7 @@ function FileBox({
 
 // ── Main Component ──────────────────────────────────────────
 
-export function DiffViewer({
+export const DiffViewer = memo(function DiffViewer({
   chunks,
   onToggleReviewed,
   onAddComment,
@@ -508,4 +512,4 @@ export function DiffViewer({
       </div>
     </div>
   );
-}
+});
