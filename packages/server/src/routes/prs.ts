@@ -48,9 +48,13 @@ export function createPrRoutes(
         res.status(400).json({ error: 'owner, repo, and number are required' });
         return;
       }
+      console.log(`[prs] Adding PR: ${body.owner}/${body.repo}#${body.number}`);
       const pr = await prService.addPr(body.owner, body.repo, body.number, body.ghHost);
       res.status(201).json(pr);
     } catch (error) {
+      console.error(
+        `[prs] Failed to add PR: ${error instanceof Error ? error.message : String(error)}`,
+      );
       res.status(500).json({ error: errorMessage(error) });
     }
   });
@@ -100,11 +104,16 @@ export function createPrRoutes(
    * Re-fetch PR metadata and diff, update chunks.
    */
   router.post('/:id/sync', async (req, res) => {
+    const prId = Number(req.params.id);
     try {
-      const prId = Number(req.params.id);
+      console.log(`[prs] Syncing PR #${prId}...`);
       const result = await prService.syncPr(prId);
+      console.log(`[prs] Sync complete for #${prId}`);
       res.json(result);
     } catch (error) {
+      console.error(
+        `[prs] Failed to sync PR #${prId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       res.status(500).json({ error: errorMessage(error) });
     }
   });
