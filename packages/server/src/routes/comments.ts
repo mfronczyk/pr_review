@@ -89,6 +89,7 @@ export function createCommentRoutes(db: Database.Database): Router {
    * Publish a comment to GitHub.
    */
   router.post('/comments/:id/publish', async (req, res) => {
+    const commentId = Number(req.params.id);
     try {
       const { owner, repo, prNumber, ghHost, commitSha } = req.body as {
         owner: string;
@@ -103,16 +104,21 @@ export function createCommentRoutes(db: Database.Database): Router {
         });
         return;
       }
+      console.log(`[comments] Publishing comment #${commentId} to ${owner}/${repo}#${prNumber}`);
       const comment = await commentService.publishComment(
-        Number(req.params.id),
+        commentId,
         owner,
         repo,
         prNumber,
         ghHost || 'github.com',
         commitSha,
       );
+      console.log(`[comments] Published comment #${commentId}`);
       res.json(comment);
     } catch (error) {
+      console.error(
+        `[comments] Failed to publish comment #${commentId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       res.status(500).json({ error: errorMessage(error) });
     }
   });
@@ -122,6 +128,7 @@ export function createCommentRoutes(db: Database.Database): Router {
    * Publish all unpublished comments for a PR.
    */
   router.post('/prs/:prId/publish-comments', async (req, res) => {
+    const prId = Number(req.params.prId);
     try {
       const { owner, repo, prNumber, ghHost, commitSha } = req.body as {
         owner: string;
@@ -136,16 +143,21 @@ export function createCommentRoutes(db: Database.Database): Router {
         });
         return;
       }
+      console.log(`[comments] Publishing all comments for PR #${prId}`);
       const count = await commentService.publishAllForPr(
-        Number(req.params.prId),
+        prId,
         owner,
         repo,
         prNumber,
         ghHost || 'github.com',
         commitSha,
       );
+      console.log(`[comments] Published ${count} comments for PR #${prId}`);
       res.json({ published: count });
     } catch (error) {
+      console.error(
+        `[comments] Failed to publish comments for PR #${prId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       res.status(500).json({ error: errorMessage(error) });
     }
   });
