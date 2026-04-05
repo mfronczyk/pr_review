@@ -291,9 +291,7 @@ export async function analyzePr(
     const { createOpencode } = await import('@opencode-ai/sdk/v2');
 
     const totalChunks = fileDiffs.reduce((sum, fd) => sum + fd.chunks.length, 0);
-    console.log(
-      `[analyze] Starting analysis: ${fileDiffs.length} files, ${totalChunks} chunks`,
-    );
+    console.log(`[analyze] Starting analysis: ${fileDiffs.length} files, ${totalChunks} chunks`);
 
     console.log('[analyze] Spinning up OpenCode instance...');
     const { client, server } = await createOpencode({ port: 0 });
@@ -313,9 +311,7 @@ export async function analyzePr(
       // Build the prompt
       const prompt = buildAnalysisPrompt(prTitle, prBody, prAuthor, baseBranch, fileDiffs);
       const promptKb = Math.round(Buffer.byteLength(prompt, 'utf8') / 1024);
-      const model = modelOverride
-        ? `${modelOverride.provider}/${modelOverride.model}`
-        : 'default';
+      const model = modelOverride ? `${modelOverride.provider}/${modelOverride.model}` : 'default';
       console.log(`[analyze] Sending prompt (${promptKb} KB) to ${model}...`);
 
       // Send prompt with structured output
