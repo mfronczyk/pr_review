@@ -8,13 +8,22 @@ import type Database from 'better-sqlite3';
 import type { ParsedFileDiff } from './diff-parser.js';
 
 /**
+ * Result of validating OpenCode SDK configuration.
+ * Contains the active model and a list of all available models for discoverability.
+ */
+export interface OpenCodeValidation {
+  activeModel: LlmModelInfo;
+  availableModels: LlmModelInfo[];
+}
+
+/**
  * Validate that the OpenCode SDK is available and correctly configured.
  * Spins up a temporary OpenCode instance, queries the active model,
- * and returns the provider + model name.
+ * and returns the provider + model name along with all available models.
  *
  * @throws {Error} if the SDK is not installed or no provider is configured
  */
-export async function validateOpenCode(): Promise<LlmModelInfo> {
+export async function validateOpenCode(): Promise<OpenCodeValidation> {
   // 1. Check that the SDK can be imported
   let createOpencode: (opts: { port: number }) => Promise<{
     client: {
@@ -47,22 +56,7 @@ export async function validateOpenCode(): Promise<LlmModelInfo> {
   // 2. Spin up a temporary instance and query the config
   const { client, server } = await createOpencode({ port: 0 });
   try {
-    // Check config for explicit model override
-    const configResult = await client.config.get();
-    const configModel = configResult.data?.model;
-
-    if (configModel) {
-      // Config model is typically "provider/model" format
-      const slashIdx = configModel.indexOf('/');
-      if (slashIdx > 0) {
-        return {
-          provider: configModel.substring(0, slashIdx),
-          model: configModel.substring(slashIdx + 1),
-        };
-      }
-    }
-
-    // Fall back to providers list to find the default
+    // Always query providers to build the available models list
     const providersResult = await client.config.providers();
     const providersData = providersResult.data;
 
@@ -74,18 +68,52 @@ export async function validateOpenCode(): Promise<LlmModelInfo> {
       );
     }
 
-    // The default map contains entries like { "chat": "anthropic" } mapping to provider IDs
-    // Find the first provider with models available
+    // Collect all available models across all providers
+    const availableModels: LlmModelInfo[] = [];
+    for (const provider of providersData.providers) {
+      for (const modelId of Object.keys(provider.models)) {
+        availableModels.push({ provider: provider.id, model: modelId });
+      }
+    }
+
+    if (availableModels.length === 0) {
+      throw new Error(
+        'No models available in any configured provider.\n' +
+          'Check your API keys and provider configuration in:\n' +
+          '  ~/.config/opencode/config.json',
+      );
+    }
+
+    // Determine the active model: check config override first, then defaults
+    const configResult = await client.config.get();
+    const configModel = configResult.data?.model;
+
+    if (configModel) {
+      const slashIdx = configModel.indexOf('/');
+      if (slashIdx > 0) {
+        return {
+          activeModel: {
+            provider: configModel.substring(0, slashIdx),
+            model: configModel.substring(slashIdx + 1),
+          },
+          availableModels,
+        };
+      }
+    }
+
+    // Fall back to the default map from providers
     const defaults = providersData.default;
     const defaultProviderKey = defaults.chat ?? defaults.code ?? Object.values(defaults)[0];
 
     if (defaultProviderKey) {
-      // defaultProviderKey might be "provider/model" or just "provider"
       const slashIdx = defaultProviderKey.indexOf('/');
       if (slashIdx > 0) {
         return {
-          provider: defaultProviderKey.substring(0, slashIdx),
-          model: defaultProviderKey.substring(slashIdx + 1),
+          activeModel: {
+            provider: defaultProviderKey.substring(0, slashIdx),
+            model: defaultProviderKey.substring(slashIdx + 1),
+          },
+          availableModels,
         };
       }
 
@@ -94,23 +122,16 @@ export async function validateOpenCode(): Promise<LlmModelInfo> {
       if (provider) {
         const modelIds = Object.keys(provider.models);
         if (modelIds.length > 0) {
-          return { provider: provider.id, model: modelIds[0] };
+          return {
+            activeModel: { provider: provider.id, model: modelIds[0] },
+            availableModels,
+          };
         }
       }
     }
 
-    // Last resort: use the first provider's first model
-    const firstProvider = providersData.providers[0];
-    const firstModelId = Object.keys(firstProvider.models)[0];
-    if (firstModelId) {
-      return { provider: firstProvider.id, model: firstModelId };
-    }
-
-    throw new Error(
-      'No models available in any configured provider.\n' +
-        'Check your API keys and provider configuration in:\n' +
-        '  ~/.config/opencode/config.json',
-    );
+    // Last resort: use the first available model
+    return { activeModel: availableModels[0], availableModels };
   } finally {
     server.close();
   }
@@ -256,6 +277,7 @@ export async function analyzePr(
   prAuthor: string,
   baseBranch: string,
   fileDiffs: ParsedFileDiff[],
+  modelOverride?: LlmModelInfo,
 ): Promise<LlmAnalysisResult> {
   const { db } = options;
 
@@ -288,6 +310,9 @@ export async function analyzePr(
       const response = await client.session.prompt({
         sessionID: session.id,
         parts: [{ type: 'text', text: prompt }],
+        ...(modelOverride && {
+          model: { providerID: modelOverride.provider, modelID: modelOverride.model },
+        }),
         format: {
           type: 'json_schema',
           schema: ANALYSIS_SCHEMA,

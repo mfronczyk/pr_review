@@ -1,4 +1,4 @@
-import type { AddPrRequest, PrWithProgress } from '@pr-review/shared';
+import type { AddPrRequest, LlmModelInfo, PrWithProgress } from '@pr-review/shared';
 import type Database from 'better-sqlite3';
 import { Router } from 'express';
 import { ChunkService } from '../services/chunk-service.js';
@@ -7,7 +7,11 @@ import { GitService } from '../services/git.js';
 import { analyzePr } from '../services/llm-analyzer.js';
 import { PrService } from '../services/pr-service.js';
 
-export function createPrRoutes(db: Database.Database, repoPath: string): Router {
+export function createPrRoutes(
+  db: Database.Database,
+  repoPath: string,
+  modelInfo?: LlmModelInfo,
+): Router {
   const router = Router();
   const prService = new PrService({ db, repoPath });
   const chunkService = new ChunkService({ db });
@@ -140,6 +144,7 @@ export function createPrRoutes(db: Database.Database, repoPath: string): Router 
         pr.author,
         pr.baseRef,
         fileDiffs,
+        modelInfo,
       );
 
       res.json(result);

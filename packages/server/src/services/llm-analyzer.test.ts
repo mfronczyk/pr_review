@@ -164,17 +164,27 @@ function mockSdk(options: {
 
 describe('validateOpenCode', () => {
   it('should return model info from config model override', async () => {
-    const mock = mockSdk({ configModel: 'anthropic/claude-sonnet-4-20250514' });
+    const mock = mockSdk({
+      configModel: 'anthropic/claude-sonnet-4-20250514',
+      providers: [
+        {
+          id: 'anthropic',
+          name: 'Anthropic',
+          models: { 'claude-sonnet-4-20250514': { name: 'Claude Sonnet' } },
+        },
+      ],
+    });
     vi.doMock('@opencode-ai/sdk/v2', () => mock);
 
     // Re-import to pick up the mock
     const { validateOpenCode: validate } = await import('./llm-analyzer.js');
     const result = await validate();
 
-    expect(result).toEqual({
+    expect(result.activeModel).toEqual({
       provider: 'anthropic',
       model: 'claude-sonnet-4-20250514',
     });
+    expect(result.availableModels).toHaveLength(1);
     expect(mock.serverClose).toHaveBeenCalled();
 
     vi.doUnmock('@opencode-ai/sdk/v2');
@@ -197,7 +207,8 @@ describe('validateOpenCode', () => {
     const { validateOpenCode: validate } = await import('./llm-analyzer.js');
     const result = await validate();
 
-    expect(result).toEqual({ provider: 'openai', model: 'gpt-4o' });
+    expect(result.activeModel).toEqual({ provider: 'openai', model: 'gpt-4o' });
+    expect(result.availableModels).toEqual([{ provider: 'openai', model: 'gpt-4o' }]);
     expect(mock.serverClose).toHaveBeenCalled();
 
     vi.doUnmock('@opencode-ai/sdk/v2');
@@ -223,8 +234,40 @@ describe('validateOpenCode', () => {
     const { validateOpenCode: validate } = await import('./llm-analyzer.js');
     const result = await validate();
 
-    expect(result.provider).toBe('anthropic');
-    expect(result.model).toBeTruthy();
+    expect(result.activeModel.provider).toBe('anthropic');
+    expect(result.activeModel.model).toBeTruthy();
+    expect(result.availableModels).toHaveLength(2);
+    expect(mock.serverClose).toHaveBeenCalled();
+
+    vi.doUnmock('@opencode-ai/sdk/v2');
+  });
+
+  it('should return all available models across providers', async () => {
+    const mock = mockSdk({
+      configModel: undefined,
+      providers: [
+        {
+          id: 'anthropic',
+          name: 'Anthropic',
+          models: { 'claude-sonnet-4-20250514': { name: 'Claude Sonnet' } },
+        },
+        {
+          id: 'openai',
+          name: 'OpenAI',
+          models: { 'gpt-4o': { name: 'GPT-4o' } },
+        },
+      ],
+      defaultMap: { chat: 'anthropic/claude-sonnet-4-20250514' },
+    });
+    vi.doMock('@opencode-ai/sdk/v2', () => mock);
+
+    const { validateOpenCode: validate } = await import('./llm-analyzer.js');
+    const result = await validate();
+
+    expect(result.availableModels).toEqual([
+      { provider: 'anthropic', model: 'claude-sonnet-4-20250514' },
+      { provider: 'openai', model: 'gpt-4o' },
+    ]);
     expect(mock.serverClose).toHaveBeenCalled();
 
     vi.doUnmock('@opencode-ai/sdk/v2');
@@ -251,8 +294,8 @@ describe('validateOpenCode', () => {
     const createOpencode = vi.fn().mockResolvedValue({
       client: {
         config: {
-          get: vi.fn().mockRejectedValue(new Error('connection failed')),
-          providers: vi.fn(),
+          get: vi.fn(),
+          providers: vi.fn().mockRejectedValue(new Error('connection failed')),
         },
       },
       server: { close: serverClose },

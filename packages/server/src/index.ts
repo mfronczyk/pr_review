@@ -40,7 +40,7 @@ export function createApp(
   });
 
   // API routes
-  app.use('/api/prs', createPrRoutes(db, repoPath));
+  app.use('/api/prs', createPrRoutes(db, repoPath, modelInfo ?? undefined));
   app.use('/api', createChunkRoutes(db));
   app.use('/api', createCommentRoutes(db));
 
@@ -120,10 +120,12 @@ if (process.env.NODE_ENV !== 'test') {
 
   // Validate OpenCode SDK and get active model info
   let modelInfo: LlmModelInfo;
+  let availableModels: LlmModelInfo[];
   try {
     console.log('Checking OpenCode configuration...');
-    modelInfo = await validateOpenCode();
-    console.log(`OpenCode OK: ${modelInfo.provider}/${modelInfo.model}`);
+    const validation = await validateOpenCode();
+    modelInfo = validation.activeModel;
+    availableModels = validation.availableModels;
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error('\nError: OpenCode is not properly configured.\n');
@@ -131,6 +133,38 @@ if (process.env.NODE_ENV !== 'test') {
     console.error('Make sure OpenCode is installed and configured:');
     console.error('  https://opencode.ai\n');
     process.exit(1);
+  }
+
+  // Allow overriding the model via LLM_MODEL env variable
+  const llmModelEnv = process.env.LLM_MODEL;
+  if (llmModelEnv) {
+    const slashIdx = llmModelEnv.indexOf('/');
+    if (slashIdx <= 0) {
+      console.error('\nError: LLM_MODEL must be in "provider/model" format.\n');
+      console.error(`  LLM_MODEL: ${llmModelEnv}\n`);
+      console.error('Available models:');
+      for (const m of availableModels) {
+        console.error(`  ${m.provider}/${m.model}`);
+      }
+      console.error('\nExample:');
+      console.error(
+        `  LLM_MODEL=${availableModels[0].provider}/${availableModels[0].model} npm run dev\n`,
+      );
+      process.exit(1);
+    }
+    modelInfo = {
+      provider: llmModelEnv.substring(0, slashIdx),
+      model: llmModelEnv.substring(slashIdx + 1),
+    };
+    console.log(`OpenCode OK (LLM_MODEL override): ${modelInfo.provider}/${modelInfo.model}`);
+  } else {
+    console.log(`OpenCode OK: ${modelInfo.provider}/${modelInfo.model}`);
+  }
+
+  // Log available models for discoverability
+  if (availableModels.length > 1) {
+    const modelList = availableModels.map((m) => `${m.provider}/${m.model}`).join(', ');
+    console.log(`Available:  ${modelList}`);
   }
 
   const dbPath = path.join(REPO_PATH, '.pr-review', 'data.db');
