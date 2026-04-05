@@ -260,66 +260,80 @@ function ChunkBlock({
 }): React.ReactElement {
   const parsedLines = useMemo(() => parseDiffLines(chunk.diffText), [chunk.diffText]);
   const contentRef = useRef<HTMLDivElement>(null);
-  const prevReviewed = useRef(chunk.reviewed);
-  const [animating, setAnimating] = useState<'collapsing' | 'expanding' | null>(null);
-  const [contentHeight, setContentHeight] = useState<number | undefined>(undefined);
   const [commentFormOpen, setCommentFormOpen] = useState(false);
 
+  // Animation: always render content, animate height via ref manipulation
+  const [collapsed, setCollapsed] = useState(chunk.reviewed);
+  const isFirstRender = useRef(true);
+
   useEffect(() => {
-    // Detect reviewed state transitions
-    if (prevReviewed.current !== chunk.reviewed) {
-      const el = contentRef.current;
-      if (chunk.reviewed && el) {
-        // Collapsing: capture current height, then animate to 0
-        setContentHeight(el.scrollHeight);
-        setAnimating('collapsing');
-        // Force a reflow so the browser registers the starting height
-        void el.offsetHeight;
-        requestAnimationFrame(() => {
-          setContentHeight(0);
-        });
-      } else if (!chunk.reviewed) {
-        // Expanding: start at 0, animate to auto (via scrollHeight)
-        setAnimating('expanding');
-        setContentHeight(0);
-        requestAnimationFrame(() => {
-          if (contentRef.current) {
-            setContentHeight(contentRef.current.scrollHeight);
-          }
-        });
-      }
-      prevReviewed.current = chunk.reviewed;
+    // Skip animation on initial mount
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
     }
+
+    const el = contentRef.current;
+    if (!el) return;
+
+    if (chunk.reviewed) {
+      // Collapsing: set explicit height, then transition to 0
+      const height = el.scrollHeight;
+      el.style.height = `${height}px`;
+      el.style.transition = 'none';
+      // Force reflow
+      void el.offsetHeight;
+      el.style.transition = `height ${COLLAPSE_DURATION_MS}ms ease-in-out, opacity ${COLLAPSE_DURATION_MS}ms ease-in-out`;
+      el.style.height = '0px';
+      el.style.opacity = '0';
+
+      const timer = setTimeout(() => {
+        setCollapsed(true);
+        el.style.transition = '';
+        el.style.height = '';
+        el.style.opacity = '';
+      }, COLLAPSE_DURATION_MS);
+      return () => clearTimeout(timer);
+    }
+    // Expanding: show content, measure, animate from 0
+    setCollapsed(false);
   }, [chunk.reviewed]);
 
+  // Handle expand animation after collapsed becomes false
   useEffect(() => {
-    if (animating === null) return;
+    if (chunk.reviewed || collapsed) return;
+    const el = contentRef.current;
+    if (!el) return;
+
+    // Start at 0 height
+    el.style.height = '0px';
+    el.style.opacity = '0';
+    el.style.overflow = 'hidden';
+    el.style.transition = 'none';
+    void el.offsetHeight;
+
+    const targetHeight = el.scrollHeight;
+    el.style.transition = `height ${COLLAPSE_DURATION_MS}ms ease-in-out, opacity ${COLLAPSE_DURATION_MS}ms ease-in-out`;
+    el.style.height = `${targetHeight}px`;
+    el.style.opacity = '1';
+
     const timer = setTimeout(() => {
-      setAnimating(null);
-      setContentHeight(undefined);
+      el.style.transition = '';
+      el.style.height = '';
+      el.style.opacity = '';
+      el.style.overflow = '';
     }, COLLAPSE_DURATION_MS);
     return () => clearTimeout(timer);
-  }, [animating]);
-
-  const isCollapsed = chunk.reviewed && animating !== 'expanding';
-  const showContent = !isCollapsed || animating === 'collapsing';
+  }, [collapsed, chunk.reviewed]);
 
   return (
-    <div className={chunk.reviewed && animating === null ? 'opacity-60' : ''}>
+    <div
+      className="transition-opacity duration-300"
+      style={{ opacity: chunk.reviewed && collapsed ? 0.6 : 1 }}
+    >
       <ChunkHeader chunk={chunk} onToggle={onToggleReviewed} isLast={isLast} />
-      {showContent && (
-        <div
-          ref={contentRef}
-          className="overflow-hidden"
-          style={{
-            height: contentHeight !== undefined ? `${contentHeight}px` : 'auto',
-            transition:
-              animating !== null
-                ? `height ${COLLAPSE_DURATION_MS}ms ease-in-out, opacity ${COLLAPSE_DURATION_MS}ms ease-in-out`
-                : undefined,
-            opacity: animating === 'collapsing' ? 0 : 1,
-          }}
-        >
+      {!collapsed && (
+        <div ref={contentRef} className="overflow-hidden">
           {chunk.metadata?.reviewNote && <ReviewNote note={chunk.metadata.reviewNote} />}
           <div className="font-mono">
             {parsedLines.map((parsed, i) => (
@@ -330,7 +344,6 @@ function ChunkBlock({
               />
             ))}
           </div>
-          {/* Show existing comments + form only when there are comments or form is open */}
           {(chunk.comments.length > 0 || commentFormOpen) && (
             <InlineComment
               comments={chunk.comments}
