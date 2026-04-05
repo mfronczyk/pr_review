@@ -92,13 +92,13 @@ function AddPrForm({ onAdded }: { onAdded: () => void }): React.ReactElement {
 // ── Progress Bar ────────────────────────────────────────────
 
 function ProgressBar({
-  reviewed,
+  approved,
   total,
 }: {
-  reviewed: number;
+  approved: number;
   total: number;
 }): React.ReactElement {
-  const pct = total === 0 ? 0 : Math.round((reviewed / total) * 100);
+  const pct = total === 0 ? 0 : Math.round((approved / total) * 100);
   return (
     <div className="flex items-center gap-2">
       <div className="h-2 w-24 overflow-hidden rounded-full bg-surface-tertiary">
@@ -108,7 +108,7 @@ function ProgressBar({
         />
       </div>
       <span className="text-xs text-fg-tertiary">
-        {reviewed}/{total} ({pct}%)
+        {approved}/{total} ({pct}%)
       </span>
     </div>
   );
@@ -156,7 +156,7 @@ function PrRow({
             <p className="mt-1 text-xs text-fg-muted">by {pr.author}</p>
           </div>
           <div className="flex-shrink-0">
-            <ProgressBar reviewed={pr.reviewedChunks} total={pr.totalChunks} />
+            <ProgressBar approved={pr.approvedChunks} total={pr.totalChunks} />
           </div>
         </div>
       </Link>

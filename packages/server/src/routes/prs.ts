@@ -24,7 +24,7 @@ export function createPrRoutes(db: Database.Database, repoPath: string): Router 
         return {
           ...pr,
           totalChunks: chunks.length,
-          reviewedChunks: chunks.filter((c) => c.reviewed).length,
+          approvedChunks: chunks.filter((c) => c.approved).length,
         };
       });
       res.json(result);
@@ -66,7 +66,7 @@ export function createPrRoutes(db: Database.Database, repoPath: string): Router 
       const result: PrWithProgress = {
         ...pr,
         totalChunks: chunks.length,
-        reviewedChunks: chunks.filter((c) => c.reviewed).length,
+        approvedChunks: chunks.filter((c) => c.approved).length,
       };
       res.json(result);
     } catch (error) {

@@ -17,7 +17,7 @@ import type { ChunkWithDetails, Comment, CommentThread } from '@pr-review/shared
 
 interface DiffViewerProps {
   chunks: ChunkWithDetails[];
-  onToggleReviewed: (chunkId: number) => void;
+  onToggleApproved: (chunkId: number) => void;
   onAddComment: (chunkId: number, body: string, line: number) => Promise<void>;
   onReplyComment: (chunkId: number, parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
@@ -31,7 +31,7 @@ interface DiffViewerProps {
 interface FileGroup {
   filePath: string;
   chunks: ChunkWithDetails[];
-  allReviewed: boolean;
+  allApproved: boolean;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -122,20 +122,20 @@ function ChunkHeader({
   return (
     <div
       className={`flex items-center gap-2 border-t border-border-secondary bg-surface-secondary px-3 py-1.5 ${
-        chunk.reviewed && isLast ? '' : ''
+        chunk.approved && isLast ? '' : ''
       }`}
     >
       <button
         type="button"
         onClick={onToggle}
         className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border text-xs ${
-          chunk.reviewed
+          chunk.approved
             ? 'border-green-600 bg-green-600 text-white'
             : 'border-fg-faint bg-transparent text-transparent hover:border-fg-tertiary'
         }`}
-        title={chunk.reviewed ? 'Mark unreviewed' : 'Mark reviewed'}
+        title={chunk.approved ? 'Mark unapproved' : 'Mark approved'}
       >
-        {chunk.reviewed ? '✓' : ''}
+        {chunk.approved ? '✓' : ''}
       </button>
 
       <span className="text-xs text-fg-muted">
@@ -154,7 +154,7 @@ function ChunkHeader({
         </span>
       )}
 
-      {chunk.reviewed && <span className="ml-auto text-[10px] text-success-fg">Reviewed</span>}
+      {chunk.approved && <span className="ml-auto text-[10px] text-success-fg">Approved</span>}
     </div>
   );
 }
@@ -284,7 +284,7 @@ const COLLAPSE_DURATION_MS = 300;
 
 function ChunkBlock({
   chunk,
-  onToggleReviewed,
+  onToggleApproved,
   onAddComment,
   onReplyComment,
   onUpdateComment,
@@ -295,7 +295,7 @@ function ChunkBlock({
   isLast,
 }: {
   chunk: ChunkWithDetails;
-  onToggleReviewed: () => void;
+  onToggleApproved: () => void;
   onAddComment: (body: string, line: number) => Promise<void>;
   onReplyComment: (parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
@@ -307,14 +307,16 @@ function ChunkBlock({
 }): React.ReactElement {
   const parsedLines = useMemo(() => parseDiffLines(chunk.diffText), [chunk.diffText]);
   const contentRef = useRef<HTMLDivElement>(null);
-  // Track which line the comment form is open for (null = closed)
-  const [commentFormLine, setCommentFormLine] = useState<number | null>(null);
+  // Track which diff line index the comment form is open for (null = closed).
+  // We use the array index (not line number) because multiple diff lines can
+  // share the same line number (e.g. a deletion followed by an addition).
+  const [commentFormIndex, setCommentFormIndex] = useState<number | null>(null);
 
   // Group comments into threads by line
   const threadsByLine = useMemo(() => groupCommentsIntoThreads(chunk.comments), [chunk.comments]);
 
   // Animation: always render content, animate height via ref manipulation
-  const [collapsed, setCollapsed] = useState(chunk.reviewed);
+  const [collapsed, setCollapsed] = useState(chunk.approved);
   const isFirstRender = useRef(true);
 
   useEffect(() => {
@@ -324,7 +326,7 @@ function ChunkBlock({
       return;
     }
 
-    if (!chunk.reviewed) {
+    if (!chunk.approved) {
       // Expanding: set collapsed=false so the content div renders,
       // then the second useEffect handles the expand animation.
       setCollapsed(false);
@@ -351,11 +353,11 @@ function ChunkBlock({
       el.style.opacity = '';
     }, COLLAPSE_DURATION_MS);
     return () => clearTimeout(timer);
-  }, [chunk.reviewed]);
+  }, [chunk.approved]);
 
   // Handle expand animation after collapsed becomes false
   useEffect(() => {
-    if (chunk.reviewed || collapsed) return;
+    if (chunk.approved || collapsed) return;
     const el = contentRef.current;
     if (!el) return;
 
@@ -378,7 +380,7 @@ function ChunkBlock({
       el.style.overflow = '';
     }, COLLAPSE_DURATION_MS);
     return () => clearTimeout(timer);
-  }, [collapsed, chunk.reviewed]);
+  }, [collapsed, chunk.approved]);
 
   /**
    * Determine the effective line number for a diff line.
@@ -397,9 +399,9 @@ function ChunkBlock({
   return (
     <div
       className="transition-opacity duration-300"
-      style={{ opacity: chunk.reviewed && collapsed ? 0.6 : 1 }}
+      style={{ opacity: chunk.approved && collapsed ? 0.6 : 1 }}
     >
-      <ChunkHeader chunk={chunk} onToggle={onToggleReviewed} isLast={isLast} />
+      <ChunkHeader chunk={chunk} onToggle={onToggleApproved} isLast={isLast} />
       {!collapsed && (
         <div ref={contentRef} className="overflow-hidden">
           {chunk.metadata?.reviewNote && <ReviewNote note={chunk.metadata.reviewNote} />}
@@ -407,7 +409,7 @@ function ChunkBlock({
             {parsedLines.map((parsed, i) => {
               const lineNum = getCommentLine(parsed);
               const threadsForLine = threadsByLine.get(lineNum);
-              const showForm = commentFormLine != null && commentFormLine === lineNum;
+              const showForm = commentFormIndex === i;
 
               return (
                 <div key={`${chunk.id}-line-${i}`}>
@@ -415,7 +417,7 @@ function ChunkBlock({
                     parsed={parsed}
                     onClickAdd={
                       parsed.type !== 'hunk-header' && parsed.type !== 'empty'
-                        ? () => setCommentFormLine(lineNum)
+                        ? () => setCommentFormIndex(i)
                         : undefined
                     }
                   />
@@ -437,9 +439,9 @@ function ChunkBlock({
                     <NewCommentForm
                       onAdd={async (body) => {
                         await onAddComment(body, lineNum);
-                        setCommentFormLine(null);
+                        setCommentFormIndex(null);
                       }}
-                      onCancel={() => setCommentFormLine(null)}
+                      onCancel={() => setCommentFormIndex(null)}
                     />
                   )}
                 </div>
@@ -456,7 +458,7 @@ function ChunkBlock({
 
 function FileBox({
   group,
-  onToggleReviewed,
+  onToggleApproved,
   onAddComment,
   onReplyComment,
   onUpdateComment,
@@ -466,7 +468,7 @@ function FileBox({
   onUnresolveThread,
 }: {
   group: FileGroup;
-  onToggleReviewed: (chunkId: number) => void;
+  onToggleApproved: (chunkId: number) => void;
   onAddComment: (chunkId: number, body: string, line: number) => Promise<void>;
   onReplyComment: (chunkId: number, parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
@@ -483,7 +485,7 @@ function FileBox({
         <span className="text-xs text-fg-muted">
           ({group.chunks.length} chunk{group.chunks.length !== 1 ? 's' : ''})
         </span>
-        {group.allReviewed && <span className="text-xs text-success-fg">✓ All reviewed</span>}
+        {group.allApproved && <span className="text-xs text-success-fg">✓ All approved</span>}
       </div>
 
       {/* Chunks */}
@@ -491,7 +493,7 @@ function FileBox({
         <ChunkBlock
           key={chunk.id}
           chunk={chunk}
-          onToggleReviewed={() => onToggleReviewed(chunk.id)}
+          onToggleApproved={() => onToggleApproved(chunk.id)}
           onAddComment={(body, line) => onAddComment(chunk.id, body, line)}
           onReplyComment={(parentId, body) => onReplyComment(chunk.id, parentId, body)}
           onUpdateComment={onUpdateComment}
@@ -510,7 +512,7 @@ function FileBox({
 
 export const DiffViewer = memo(function DiffViewer({
   chunks,
-  onToggleReviewed,
+  onToggleApproved,
   onAddComment,
   onReplyComment,
   onUpdateComment,
@@ -539,7 +541,7 @@ export const DiffViewer = memo(function DiffViewer({
       result.push({
         filePath,
         chunks: sorted,
-        allReviewed: sorted.every((c) => c.reviewed),
+        allApproved: sorted.every((c) => c.approved),
       });
     }
     return result;
@@ -551,7 +553,7 @@ export const DiffViewer = memo(function DiffViewer({
       const group = fileGroups[index];
       let height = 36; // file header
       for (const chunk of group.chunks) {
-        if (chunk.reviewed) {
+        if (chunk.approved) {
           height += 32; // collapsed chunk header
         } else {
           const lineCount = chunk.diffText.split('\n').length;
@@ -597,7 +599,7 @@ export const DiffViewer = memo(function DiffViewer({
           >
             <FileBox
               group={fileGroups[virtualRow.index]}
-              onToggleReviewed={onToggleReviewed}
+              onToggleApproved={onToggleApproved}
               onAddComment={onAddComment}
               onReplyComment={onReplyComment}
               onUpdateComment={onUpdateComment}

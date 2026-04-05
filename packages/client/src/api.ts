@@ -76,8 +76,8 @@ export function getChunk(id: number): Promise<ChunkWithDetails> {
   return request(`/api/chunks/${id}`);
 }
 
-export function toggleReviewed(id: number): Promise<ChunkWithDetails> {
-  return request(`/api/chunks/${id}/reviewed`, { method: 'PATCH' });
+export function toggleApproved(id: number): Promise<ChunkWithDetails> {
+  return request(`/api/chunks/${id}/approved`, { method: 'PATCH' });
 }
 
 export function updateMetadata(
@@ -99,6 +99,13 @@ export function setChunkTags(id: number, tagIds: number[]): Promise<ChunkWithDet
 
 export function bulkApprove(prId: number, tagId: number): Promise<{ approved: number }> {
   return request(`/api/prs/${prId}/bulk-approve`, {
+    method: 'POST',
+    body: JSON.stringify({ tagId }),
+  });
+}
+
+export function bulkUnapprove(prId: number, tagId: number): Promise<{ unapproved: number }> {
+  return request(`/api/prs/${prId}/bulk-unapprove`, {
     method: 'POST',
     body: JSON.stringify({ tagId }),
   });

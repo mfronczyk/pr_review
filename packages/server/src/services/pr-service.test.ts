@@ -1,6 +1,6 @@
 /**
  * Unit tests for PrService.reconcileChunks – verifies chunk reconciliation
- * preserves review state, tags, metadata, and comments for unchanged chunks
+ * preserves approval state, tags, metadata, and comments for unchanged chunks
  * while correctly adding/removing changed chunks.
  */
 
@@ -58,7 +58,7 @@ function getChunks(): Array<{
   content_hash: string;
   file_path: string;
   chunk_index: number;
-  reviewed: number;
+  approved: number;
   start_line: number;
   end_line: number;
 }> {
@@ -69,7 +69,7 @@ function getChunks(): Array<{
     content_hash: string;
     file_path: string;
     chunk_index: number;
-    reviewed: number;
+    approved: number;
     start_line: number;
     end_line: number;
   }>;
@@ -123,15 +123,15 @@ describe('PrService.reconcileChunks', () => {
     expect(chunks).toHaveLength(2);
     expect(chunks[0].content_hash).toBe('hashA');
     expect(chunks[1].content_hash).toBe('hashB');
-    expect(chunks[0].reviewed).toBe(0);
+    expect(chunks[0].approved).toBe(0);
   });
 
-  it('should preserve review state for unchanged chunks', () => {
+  it('should preserve approval state for unchanged chunks', () => {
     // Initial sync
     service.reconcileChunks(prId, [chunkA, chunkB]);
     const chunks = getChunks();
-    // Mark chunk A as reviewed
-    db.prepare("UPDATE chunks SET reviewed = 1, reviewed_at = datetime('now') WHERE id = ?").run(
+    // Mark chunk A as approved
+    db.prepare("UPDATE chunks SET approved = 1, approved_at = datetime('now') WHERE id = ?").run(
       chunks[0].id,
     );
 
@@ -140,7 +140,7 @@ describe('PrService.reconcileChunks', () => {
     expect(result).toEqual({ added: 0, removed: 0, updated: 0, outdated: 0 });
 
     const afterSync = getChunks();
-    expect(afterSync[0].reviewed).toBe(1); // preserved
+    expect(afterSync[0].approved).toBe(1); // preserved
     expect(afterSync[0].id).toBe(chunks[0].id); // same row
   });
 
@@ -236,16 +236,16 @@ describe('PrService.reconcileChunks', () => {
 
     const chunks = getChunks();
     expect(chunks).toHaveLength(2);
-    // New chunk should be unreviewed
+    // New chunk should be unapproved
     const newChunk = chunks.find((c) => c.content_hash === 'hashC');
     expect(newChunk).toBeDefined();
-    expect(newChunk?.reviewed).toBe(0);
+    expect(newChunk?.approved).toBe(0);
   });
 
   it('should handle content change at same position: old deleted, new inserted', () => {
     service.reconcileChunks(prId, [chunkA]);
     const chunks = getChunks();
-    db.prepare("UPDATE chunks SET reviewed = 1, reviewed_at = datetime('now') WHERE id = ?").run(
+    db.prepare("UPDATE chunks SET approved = 1, approved_at = datetime('now') WHERE id = ?").run(
       chunks[0].id,
     );
 
@@ -266,14 +266,14 @@ describe('PrService.reconcileChunks', () => {
     const afterSync = getChunks();
     expect(afterSync).toHaveLength(1);
     expect(afterSync[0].content_hash).toBe('hashA_v2');
-    expect(afterSync[0].reviewed).toBe(0); // fresh, not reviewed
+    expect(afterSync[0].approved).toBe(0); // fresh, not approved
   });
 
   it('should update position when chunk moves but content stays the same', () => {
     service.reconcileChunks(prId, [chunkA]);
     const chunks = getChunks();
     const originalId = chunks[0].id;
-    db.prepare("UPDATE chunks SET reviewed = 1, reviewed_at = datetime('now') WHERE id = ?").run(
+    db.prepare("UPDATE chunks SET approved = 1, approved_at = datetime('now') WHERE id = ?").run(
       originalId,
     );
 
@@ -294,7 +294,7 @@ describe('PrService.reconcileChunks', () => {
     const afterSync = getChunks();
     expect(afterSync).toHaveLength(1);
     expect(afterSync[0].id).toBe(originalId); // same DB row
-    expect(afterSync[0].reviewed).toBe(1); // review preserved
+    expect(afterSync[0].approved).toBe(1); // approval preserved
     expect(afterSync[0].file_path).toBe('src/moved.ts');
     expect(afterSync[0].chunk_index).toBe(2);
     expect(afterSync[0].start_line).toBe(20);
@@ -305,7 +305,7 @@ describe('PrService.reconcileChunks', () => {
     const chunks = getChunks();
     // Review both
     for (const c of chunks) {
-      db.prepare("UPDATE chunks SET reviewed = 1, reviewed_at = datetime('now') WHERE id = ?").run(
+      db.prepare("UPDATE chunks SET approved = 1, approved_at = datetime('now') WHERE id = ?").run(
         c.id,
       );
     }
@@ -332,10 +332,10 @@ describe('PrService.reconcileChunks', () => {
 
     const survivorA = afterSync.find((c) => c.content_hash === 'hashA');
     expect(survivorA?.id).toBe(idA);
-    expect(survivorA?.reviewed).toBe(1);
+    expect(survivorA?.approved).toBe(1);
 
     const newC = afterSync.find((c) => c.content_hash === 'hashC');
-    expect(newC?.reviewed).toBe(0);
+    expect(newC?.approved).toBe(0);
 
     // Confirm B is gone
     const bExists = db.prepare('SELECT id FROM chunks WHERE id = ?').get(idB);

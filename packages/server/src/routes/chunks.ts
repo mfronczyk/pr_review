@@ -37,12 +37,12 @@ export function createChunkRoutes(db: Database.Database): Router {
   });
 
   /**
-   * PATCH /api/chunks/:id/reviewed
-   * Toggle chunk reviewed state.
+   * PATCH /api/chunks/:id/approved
+   * Toggle chunk approved state.
    */
-  router.patch('/chunks/:id/reviewed', (req, res) => {
+  router.patch('/chunks/:id/approved', (req, res) => {
     try {
-      const chunk = chunkService.toggleReviewed(Number(req.params.id));
+      const chunk = chunkService.toggleApproved(Number(req.params.id));
       res.json(chunk);
     } catch (error) {
       res.status(500).json({ error: errorMessage(error) });
@@ -103,6 +103,24 @@ export function createChunkRoutes(db: Database.Database): Router {
       }
       const count = chunkService.bulkApproveByTag(Number(req.params.prId), tagId);
       res.json({ approved: count });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /**
+   * POST /api/prs/:prId/bulk-unapprove
+   * Bulk unapprove all chunks with a given tag.
+   */
+  router.post('/prs/:prId/bulk-unapprove', (req, res) => {
+    try {
+      const { tagId } = req.body as { tagId: number };
+      if (!tagId) {
+        res.status(400).json({ error: 'tagId is required' });
+        return;
+      }
+      const count = chunkService.bulkUnapproveByTag(Number(req.params.prId), tagId);
+      res.json({ unapproved: count });
     } catch (error) {
       res.status(500).json({ error: errorMessage(error) });
     }

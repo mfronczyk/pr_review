@@ -16,7 +16,7 @@ import type { ChunkWithDetails, PrWithProgress, Tag } from '@pr-review/shared';
 interface GroupInfo {
   tag: Tag;
   chunks: ChunkWithDetails[];
-  reviewedCount: number;
+  approvedCount: number;
 }
 
 // ── Error Banner ────────────────────────────────────────────
@@ -42,16 +42,16 @@ function ErrorBanner({
 
 function ProgressDots({
   total,
-  reviewed,
+  approved,
   color,
 }: {
   total: number;
-  reviewed: number;
+  approved: number;
   color: string;
 }): React.ReactElement {
   // For large groups, show a compact bar instead of individual dots
   if (total > 20) {
-    const pct = total === 0 ? 0 : Math.round((reviewed / total) * 100);
+    const pct = total === 0 ? 0 : Math.round((approved / total) * 100);
     return (
       <div className="flex items-center gap-1.5">
         <div className="h-1 w-10 overflow-hidden rounded-full bg-surface-tertiary">
@@ -61,23 +61,23 @@ function ProgressDots({
           />
         </div>
         <span className="text-[10px] text-fg-muted">
-          {reviewed}/{total}
+          {approved}/{total}
         </span>
       </div>
     );
   }
 
-  // Build stable keys: reviewed dots first, then unreviewed
+  // Build stable keys: approved dots first, then unapproved
   const dots = useMemo(() => {
     const result: Array<{ key: string; filled: boolean }> = [];
-    for (let i = 0; i < reviewed; i++) {
+    for (let i = 0; i < approved; i++) {
       result.push({ key: `r${i}`, filled: true });
     }
-    for (let i = 0; i < total - reviewed; i++) {
+    for (let i = 0; i < total - approved; i++) {
       result.push({ key: `u${i}`, filled: false });
     }
     return result;
-  }, [total, reviewed]);
+  }, [total, approved]);
 
   return (
     <div className="flex flex-wrap items-center gap-0.5">
@@ -242,6 +242,7 @@ const Sidebar = memo(function Sidebar({
   onFilterByFile: (filePath: string) => void;
   onClearFilter: () => void;
   onBulkApprove: (tagId: number) => void;
+  onBulkUnapprove: (tagId: number) => void;
 }): React.ReactElement {
   const [filesExpanded, setFilesExpanded] = useState(true);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
@@ -285,12 +286,12 @@ const Sidebar = memo(function Sidebar({
             <div
               className="h-full rounded-full bg-green-500"
               style={{
-                width: `${pr.totalChunks === 0 ? 0 : Math.round((pr.reviewedChunks / pr.totalChunks) * 100)}%`,
+                width: `${pr.totalChunks === 0 ? 0 : Math.round((pr.approvedChunks / pr.totalChunks) * 100)}%`,
               }}
             />
           </div>
           <span className="text-xs text-fg-tertiary">
-            {pr.reviewedChunks}/{pr.totalChunks}
+            {pr.approvedChunks}/{pr.totalChunks}
           </span>
         </div>
       </div>
@@ -314,13 +315,13 @@ const Sidebar = memo(function Sidebar({
         )}
         <div className="space-y-1.5">
           {groups.map((g) => {
-            const allReviewed = g.reviewedCount >= g.chunks.length;
+            const allApproved = g.approvedCount >= g.chunks.length;
             const isActive = activeFilter?.type === 'tag' && activeFilter.value === g.tag.name;
             return (
               <div
                 key={g.tag.name}
                 className={`group rounded px-2 py-1.5 text-xs cursor-pointer hover:bg-surface-active ${
-                  allReviewed
+                  allApproved
                     ? 'bg-green-50 dark:bg-green-900/20'
                     : isActive
                       ? 'bg-surface-active text-fg-primary'
@@ -335,14 +336,22 @@ const Sidebar = memo(function Sidebar({
                       className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
                       style={{ backgroundColor: g.tag.color || '#6b7280' }}
                     />
-                    <span className={`truncate ${allReviewed ? 'text-fg-muted' : ''}`}>
+                    <span className={`truncate ${allApproved ? 'text-fg-muted' : ''}`}>
                       {g.tag.name}
                     </span>
                   </div>
-                  {allReviewed ? (
-                    <span className="flex-shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-800/50 dark:text-green-300">
+                  {allApproved ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onBulkUnapprove(g.tag.id);
+                      }}
+                      className="flex-shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 hover:bg-red-100 hover:text-red-700 dark:bg-green-800/50 dark:text-green-300 dark:hover:bg-red-900/50 dark:hover:text-red-300"
+                      title="Unapprove all"
+                    >
                       ✓ Done
-                    </span>
+                    </button>
                   ) : (
                     <button
                       type="button"
@@ -360,7 +369,7 @@ const Sidebar = memo(function Sidebar({
                 <div className="mt-1 pl-4">
                   <ProgressDots
                     total={g.chunks.length}
-                    reviewed={g.reviewedCount}
+                    approved={g.approvedCount}
                     color={g.tag.color || '#6b7280'}
                   />
                 </div>
@@ -406,8 +415,8 @@ const Sidebar = memo(function Sidebar({
 // ── Toolbar ─────────────────────────────────────────────────
 
 function Toolbar({
-  hideReviewed,
-  onToggleHideReviewed,
+  hideApproved,
+  onToggleHideApproved,
   onSync,
   onAnalyze,
   onPublishAll,
@@ -415,8 +424,8 @@ function Toolbar({
   analyzing,
   unpublishedCount,
 }: {
-  hideReviewed: boolean;
-  onToggleHideReviewed: () => void;
+  hideApproved: boolean;
+  onToggleHideApproved: () => void;
   onSync: () => void;
   onAnalyze: () => void;
   onPublishAll: () => Promise<void>;
@@ -440,11 +449,11 @@ function Toolbar({
       <label className="flex items-center gap-2 text-xs text-fg-tertiary">
         <input
           type="checkbox"
-          checked={hideReviewed}
-          onChange={onToggleHideReviewed}
+          checked={hideApproved}
+          onChange={onToggleHideApproved}
           className="rounded border-border-primary bg-surface-input text-blue-500 focus:ring-blue-500"
         />
-        Hide reviewed
+        Hide approved
       </label>
       <div className="flex items-center gap-2">
         {unpublishedCount > 0 && (
@@ -490,7 +499,7 @@ export function ReviewPage(): React.ReactElement {
     type: 'tag' | 'file';
     value: string;
   } | null>(null);
-  const [hideReviewed, setHideReviewed] = useState(false);
+  const [hideApproved, setHideApproved] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -546,7 +555,7 @@ export function ReviewPage(): React.ReactElement {
         map.set(tag.id, {
           tag,
           chunks: tagChunks,
-          reviewedCount: tagChunks.filter((c) => c.reviewed).length,
+          approvedCount: tagChunks.filter((c) => c.approved).length,
         });
       }
     }
@@ -571,15 +580,15 @@ export function ReviewPage(): React.ReactElement {
     if (!pr) return null;
     if (!chunks) return pr;
     const totalChunks = chunks.length;
-    const reviewedChunks = chunks.filter((c) => c.reviewed).length;
+    const approvedChunks = chunks.filter((c) => c.approved).length;
     // Return same reference if counts haven't changed
-    if (pr.totalChunks === totalChunks && pr.reviewedChunks === reviewedChunks) {
+    if (pr.totalChunks === totalChunks && pr.approvedChunks === approvedChunks) {
       return pr;
     }
-    return { ...pr, totalChunks, reviewedChunks };
+    return { ...pr, totalChunks, approvedChunks };
   }, [pr, chunks]);
 
-  // Filter chunks based on active filter and hide-reviewed toggle
+  // Filter chunks based on active filter and hide-approved toggle
   const filteredChunks = useMemo((): ChunkWithDetails[] => {
     if (!chunks) return [];
     let result = chunks;
@@ -590,11 +599,11 @@ export function ReviewPage(): React.ReactElement {
         result = result.filter((c) => c.filePath === activeFilter.value);
       }
     }
-    if (hideReviewed) {
-      result = result.filter((c) => !c.reviewed);
+    if (hideApproved) {
+      result = result.filter((c) => !c.approved);
     }
     return result;
-  }, [chunks, activeFilter, hideReviewed]);
+  }, [chunks, activeFilter, hideApproved]);
 
   async function handleSync(): Promise<void> {
     setSyncing(true);
@@ -614,15 +623,15 @@ export function ReviewPage(): React.ReactElement {
     setAnalyzing(false);
   }
 
-  const handleToggleReviewed = useCallback(
+  const handleToggleApproved = useCallback(
     async (chunkId: number): Promise<void> => {
-      // Optimistically toggle the reviewed state locally
+      // Optimistically toggle the approved state locally
       setChunks((prev) => {
         if (!prev) return prev;
-        return prev.map((c) => (c.id === chunkId ? { ...c, reviewed: !c.reviewed } : c));
+        return prev.map((c) => (c.id === chunkId ? { ...c, approved: !c.approved } : c));
       });
       await withErrorHandling(async () => {
-        await api.toggleReviewed(chunkId);
+        await api.toggleApproved(chunkId);
         // No reloadPr() — progress is derived from local chunks state
       });
     },
@@ -631,14 +640,30 @@ export function ReviewPage(): React.ReactElement {
 
   const handleBulkApprove = useCallback(
     async (tagId: number): Promise<void> => {
-      // Optimistically mark all chunks with this tag as reviewed
+      // Optimistically mark all chunks with this tag as approved
       setChunks((prev) => {
         if (!prev) return prev;
-        return prev.map((c) => (c.tags.some((t) => t.id === tagId) ? { ...c, reviewed: true } : c));
+        return prev.map((c) => (c.tags.some((t) => t.id === tagId) ? { ...c, approved: true } : c));
       });
       await withErrorHandling(async () => {
         await api.bulkApprove(prId, tagId);
         // No reloadPr() — progress is derived from local chunks state
+      });
+    },
+    [prId, withErrorHandling],
+  );
+
+  const handleBulkUnapprove = useCallback(
+    async (tagId: number): Promise<void> => {
+      // Optimistically mark all chunks with this tag as unapproved
+      setChunks((prev) => {
+        if (!prev) return prev;
+        return prev.map((c) =>
+          c.tags.some((t) => t.id === tagId) ? { ...c, approved: false } : c,
+        );
+      });
+      await withErrorHandling(async () => {
+        await api.bulkUnapprove(prId, tagId);
       });
     },
     [prId, withErrorHandling],
@@ -806,7 +831,7 @@ export function ReviewPage(): React.ReactElement {
 
   const handleDismissError = useCallback(() => setActionError(null), []);
 
-  const handleToggleHideReviewed = useCallback(() => setHideReviewed((h) => !h), []);
+  const handleToggleHideApproved = useCallback(() => setHideApproved((h) => !h), []);
 
   const loading = prLoading || chunksLoading;
   const error = prError || chunksError;
@@ -839,14 +864,15 @@ export function ReviewPage(): React.ReactElement {
         onFilterByFile={handleFilterByFile}
         onClearFilter={handleClearFilter}
         onBulkApprove={handleBulkApprove}
+        onBulkUnapprove={handleBulkUnapprove}
       />
 
       <div className="flex flex-1 flex-col overflow-hidden">
         {actionError && <ErrorBanner message={actionError} onDismiss={handleDismissError} />}
 
         <Toolbar
-          hideReviewed={hideReviewed}
-          onToggleHideReviewed={handleToggleHideReviewed}
+          hideApproved={hideApproved}
+          onToggleHideApproved={handleToggleHideApproved}
           onSync={handleSync}
           onAnalyze={handleAnalyze}
           onPublishAll={handlePublishAll}
@@ -858,14 +884,14 @@ export function ReviewPage(): React.ReactElement {
         <div className="flex-1 overflow-hidden">
           {filteredChunks.length === 0 ? (
             <div className="py-12 text-center text-fg-muted">
-              {hideReviewed
-                ? 'All chunks reviewed! Uncheck "Hide reviewed" to see them.'
+              {hideApproved
+                ? 'All chunks approved! Uncheck "Hide approved" to see them.'
                 : 'No chunks match the current filter.'}
             </div>
           ) : (
             <DiffViewer
               chunks={filteredChunks}
-              onToggleReviewed={handleToggleReviewed}
+              onToggleApproved={handleToggleApproved}
               onAddComment={handleAddComment}
               onReplyComment={handleReplyComment}
               onUpdateComment={handleUpdateComment}

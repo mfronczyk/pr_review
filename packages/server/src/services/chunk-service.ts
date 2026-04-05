@@ -45,50 +45,66 @@ export class ChunkService {
   }
 
   /**
-   * Toggle the reviewed state of a chunk.
+   * Toggle the approved state of a chunk.
    */
-  toggleReviewed(chunkId: number): Chunk {
+  toggleApproved(chunkId: number): Chunk {
     const chunk = this.db.prepare('SELECT * FROM chunks WHERE id = ?').get(chunkId) as
       | ChunkDbRow
       | undefined;
     if (!chunk) throw new Error(`Chunk not found: ${chunkId}`);
 
-    const newReviewed = chunk.reviewed ? 0 : 1;
-    const reviewedAt = newReviewed ? new Date().toISOString() : null;
+    const newApproved = chunk.approved ? 0 : 1;
+    const approvedAt = newApproved ? new Date().toISOString() : null;
 
     this.db
-      .prepare('UPDATE chunks SET reviewed = ?, reviewed_at = ? WHERE id = ?')
-      .run(newReviewed, reviewedAt, chunkId);
+      .prepare('UPDATE chunks SET approved = ?, approved_at = ? WHERE id = ?')
+      .run(newApproved, approvedAt, chunkId);
 
-    return mapChunkRow({ ...chunk, reviewed: newReviewed, reviewed_at: reviewedAt });
+    return mapChunkRow({ ...chunk, approved: newApproved, approved_at: approvedAt });
   }
 
   /**
-   * Mark a chunk as reviewed.
+   * Mark a chunk as approved.
    */
-  markReviewed(chunkId: number): void {
+  markApproved(chunkId: number): void {
     this.db
-      .prepare("UPDATE chunks SET reviewed = 1, reviewed_at = datetime('now') WHERE id = ?")
+      .prepare("UPDATE chunks SET approved = 1, approved_at = datetime('now') WHERE id = ?")
       .run(chunkId);
   }
 
   /**
-   * Mark a chunk as unreviewed.
+   * Mark a chunk as unapproved.
    */
-  markUnreviewed(chunkId: number): void {
-    this.db.prepare('UPDATE chunks SET reviewed = 0, reviewed_at = NULL WHERE id = ?').run(chunkId);
+  markUnapproved(chunkId: number): void {
+    this.db.prepare('UPDATE chunks SET approved = 0, approved_at = NULL WHERE id = ?').run(chunkId);
   }
 
   /**
-   * Bulk approve: mark all chunks with a given tag as reviewed.
+   * Bulk approve: mark all chunks with a given tag as approved.
    */
   bulkApproveByTag(prId: number, tagId: number): number {
     const result = this.db
       .prepare(
-        `UPDATE chunks SET reviewed = 1, reviewed_at = datetime('now')
+        `UPDATE chunks SET approved = 1, approved_at = datetime('now')
        WHERE pr_id = ? AND id IN (
          SELECT chunk_id FROM chunk_tags WHERE tag_id = ?
-       ) AND reviewed = 0`,
+       ) AND approved = 0`,
+      )
+      .run(prId, tagId);
+
+    return result.changes;
+  }
+
+  /**
+   * Bulk unapprove: mark all chunks with a given tag as unapproved.
+   */
+  bulkUnapproveByTag(prId: number, tagId: number): number {
+    const result = this.db
+      .prepare(
+        `UPDATE chunks SET approved = 0, approved_at = NULL
+       WHERE pr_id = ? AND id IN (
+         SELECT chunk_id FROM chunk_tags WHERE tag_id = ?
+       ) AND approved = 1`,
       )
       .run(prId, tagId);
 
@@ -204,8 +220,8 @@ interface ChunkDbRow {
   diff_text: string;
   start_line: number;
   end_line: number;
-  reviewed: number;
-  reviewed_at: string | null;
+  approved: number;
+  approved_at: string | null;
 }
 
 interface TagDbRow {
@@ -249,8 +265,8 @@ function mapChunkRow(row: ChunkDbRow): Chunk {
     diffText: row.diff_text,
     startLine: row.start_line,
     endLine: row.end_line,
-    reviewed: Boolean(row.reviewed),
-    reviewedAt: row.reviewed_at,
+    approved: Boolean(row.approved),
+    approvedAt: row.approved_at,
   };
 }
 

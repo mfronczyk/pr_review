@@ -58,8 +58,8 @@ function createTables(db: Database.Database): void {
       diff_text     TEXT NOT NULL,
       start_line    INTEGER NOT NULL DEFAULT 0,
       end_line      INTEGER NOT NULL DEFAULT 0,
-      reviewed      INTEGER NOT NULL DEFAULT 0,
-      reviewed_at   TEXT,
+      approved      INTEGER NOT NULL DEFAULT 0,
+      approved_at   TEXT,
       UNIQUE(pr_id, file_path, chunk_index)
     );
 

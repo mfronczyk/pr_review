@@ -37,11 +37,11 @@ export interface Chunk {
   diffText: string;
   startLine: number;
   endLine: number;
-  reviewed: boolean;
-  reviewedAt: string | null;
+  approved: boolean;
+  approvedAt: string | null;
 }
 
-export type ReviewState = 'unreviewed' | 'reviewed' | 'outdated';
+export type ReviewState = 'unapproved' | 'approved' | 'outdated';
 
 // ── Tag ─────────────────────────────────────────────────────
 
@@ -155,7 +155,7 @@ export interface AddPrRequest {
 
 export interface PrWithProgress extends PullRequest {
   totalChunks: number;
-  reviewedChunks: number;
+  approvedChunks: number;
 }
 
 export interface ChunkWithDetails extends Chunk {

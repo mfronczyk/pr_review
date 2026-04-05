@@ -163,11 +163,11 @@ export class PrService {
    *
    * Strategy (content-hash based):
    * - Chunks whose content hash still exists in the new diff survive with
-   *   all their state (reviewed, tags, metadata, comments). If their
+   *   all their state (approved, tags, metadata, comments). If their
    *   file position changed, the row is updated in place.
    * - Chunks whose content hash is gone are deleted (CASCADE removes
    *   tags, metadata, and comments).
-   * - New content hashes are inserted as fresh unreviewed chunks.
+   * - New content hashes are inserted as fresh unapproved chunks.
    */
   reconcileChunks(
     prId: number,
@@ -245,7 +245,7 @@ export class PrService {
             );
             updated++;
           }
-          // reviewed, reviewed_at, tags, metadata, comments are all preserved
+          // approved, approvedAt, tags, metadata, comments are all preserved
         }
       }
 
@@ -329,8 +329,8 @@ interface ChunkDbRow {
   diff_text: string;
   start_line: number;
   end_line: number;
-  reviewed: number;
-  reviewed_at: string | null;
+  approved: number;
+  approved_at: string | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────
