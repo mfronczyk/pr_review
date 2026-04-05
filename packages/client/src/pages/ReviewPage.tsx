@@ -313,51 +313,60 @@ const Sidebar = memo(function Sidebar({
           </button>
         )}
         <div className="space-y-1.5">
-          {groups.map((g) => (
-            <div
-              key={g.tag.name}
-              className={`group rounded px-2 py-1.5 text-xs cursor-pointer hover:bg-surface-active ${
-                activeFilter?.type === 'tag' && activeFilter.value === g.tag.name
-                  ? 'bg-surface-active text-fg-primary'
-                  : 'text-fg-secondary'
-              }`}
-              onClick={() => onFilterByTag(g.tag.name)}
-              onKeyDown={(e) => e.key === 'Enter' && onFilterByTag(g.tag.name)}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span
-                    className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
-                    style={{ backgroundColor: g.tag.color || '#6b7280' }}
-                  />
-                  <span className="truncate">{g.tag.name}</span>
+          {groups.map((g) => {
+            const allReviewed = g.reviewedCount >= g.chunks.length;
+            const isActive = activeFilter?.type === 'tag' && activeFilter.value === g.tag.name;
+            return (
+              <div
+                key={g.tag.name}
+                className={`group rounded px-2 py-1.5 text-xs cursor-pointer hover:bg-surface-active ${
+                  allReviewed
+                    ? 'bg-green-50 dark:bg-green-900/20'
+                    : isActive
+                      ? 'bg-surface-active text-fg-primary'
+                      : 'text-fg-secondary'
+                } ${isActive ? 'ring-1 ring-border-primary' : ''}`}
+                onClick={() => onFilterByTag(g.tag.name)}
+                onKeyDown={(e) => e.key === 'Enter' && onFilterByTag(g.tag.name)}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
+                      style={{ backgroundColor: g.tag.color || '#6b7280' }}
+                    />
+                    <span className={`truncate ${allReviewed ? 'text-fg-muted' : ''}`}>
+                      {g.tag.name}
+                    </span>
+                  </div>
+                  {allReviewed ? (
+                    <span className="flex-shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-800/50 dark:text-green-300">
+                      ✓ Done
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onBulkApprove(g.tag.id);
+                      }}
+                      className="flex-shrink-0 rounded bg-green-700 px-1.5 py-0.5 text-[10px] text-white opacity-0 hover:bg-green-600 group-hover:opacity-100 dark:bg-green-800 dark:text-green-200 dark:hover:bg-green-700"
+                      title="Approve all"
+                    >
+                      Approve
+                    </button>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onBulkApprove(g.tag.id);
-                  }}
-                  className={`flex-shrink-0 rounded bg-green-700 px-1.5 py-0.5 text-[10px] text-white hover:bg-green-600 dark:bg-green-800 dark:text-green-200 dark:hover:bg-green-700 ${
-                    g.reviewedCount < g.chunks.length
-                      ? 'opacity-0 group-hover:opacity-100'
-                      : 'invisible'
-                  }`}
-                  title="Approve all"
-                  disabled={g.reviewedCount >= g.chunks.length}
-                >
-                  Approve
-                </button>
+                <div className="mt-1 pl-4">
+                  <ProgressDots
+                    total={g.chunks.length}
+                    reviewed={g.reviewedCount}
+                    color={g.tag.color || '#6b7280'}
+                  />
+                </div>
               </div>
-              <div className="mt-1 pl-4">
-                <ProgressDots
-                  total={g.chunks.length}
-                  reviewed={g.reviewedCount}
-                  color={g.tag.color || '#6b7280'}
-                />
-              </div>
-            </div>
-          ))}
+            );
+          })}
           {groups.length === 0 && (
             <p className="text-xs text-fg-faint">No tags assigned yet. Run LLM analysis.</p>
           )}
