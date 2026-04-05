@@ -127,8 +127,7 @@ export class PrService {
 
   /**
    * Fetch the PR branch via git, compute diff, parse into chunks,
-   * and upsert into the database. Tracks which chunks are new,
-   * which were removed, and which are outdated.
+   * and reconcile with the database.
    */
   private async fetchAndStoreDiff(pr: PrDbRow): Promise<SyncResult> {
     // Fetch PR ref from remote
@@ -143,10 +142,35 @@ export class PrService {
     const fileDiffs = parseDiff(rawDiff);
     const newChunks = flattenChunks(fileDiffs);
 
+    return this.reconcileChunks(pr.id, newChunks);
+  }
+
+  /**
+   * Reconcile new parsed chunks with existing chunks in the database.
+   *
+   * Strategy (content-hash based):
+   * - Chunks whose content hash still exists in the new diff survive with
+   *   all their state (reviewed, tags, metadata, comments). If their
+   *   file position changed, the row is updated in place.
+   * - Chunks whose content hash is gone are deleted (CASCADE removes
+   *   tags, metadata, and comments).
+   * - New content hashes are inserted as fresh unreviewed chunks.
+   */
+  reconcileChunks(
+    prId: number,
+    newChunks: Array<{
+      filePath: string;
+      chunkIndex: number;
+      contentHash: string;
+      diffText: string;
+      startLine: number;
+      endLine: number;
+    }>,
+  ): SyncResult {
     // Get existing chunks for this PR
     const existingChunks = this.db
       .prepare('SELECT * FROM chunks WHERE pr_id = ?')
-      .all(pr.id) as ChunkDbRow[];
+      .all(prId) as ChunkDbRow[];
 
     const existingByHash = new Map(existingChunks.map((c) => [c.content_hash, c]));
     const newHashes = new Set(newChunks.map((c) => c.contentHash));
@@ -154,66 +178,89 @@ export class PrService {
     let added = 0;
     let removed = 0;
     let updated = 0;
-    let outdated = 0;
 
-    // Upsert new chunks
-    const upsertChunk = this.db.prepare(`
-      INSERT INTO chunks (pr_id, file_path, chunk_index, content_hash, diff_text, start_line, end_line)
-      VALUES (@prId, @filePath, @chunkIndex, @contentHash, @diffText, @startLine, @endLine)
-      ON CONFLICT (pr_id, file_path, chunk_index) DO UPDATE SET
-        content_hash = @contentHash,
-        diff_text = @diffText,
-        start_line = @startLine,
-        end_line = @endLine
-    `);
+    const reconcile = this.db.transaction(() => {
+      // 1. Delete chunks whose content hash no longer exists in the new diff.
+      //    CASCADE removes their tags, metadata, and comments automatically.
+      const deleteChunk = this.db.prepare('DELETE FROM chunks WHERE id = ?');
+      for (const existing of existingChunks) {
+        if (!newHashes.has(existing.content_hash)) {
+          deleteChunk.run(existing.id);
+          removed++;
+        }
+      }
 
-    const upsertAll = this.db.transaction(() => {
+      // 2. Update surviving chunks whose position changed.
+      //    We must do this before inserting new chunks to avoid UNIQUE
+      //    constraint violations on (pr_id, file_path, chunk_index).
+      //    Use a temporary sentinel chunk_index = -1 to avoid conflicts
+      //    when two chunks swap positions.
+      const clearPosition = this.db.prepare(
+        'UPDATE chunks SET file_path = ?, chunk_index = -1 WHERE id = ?',
+      );
+      const updatePosition = this.db.prepare(
+        'UPDATE chunks SET file_path = ?, chunk_index = ?, start_line = ?, end_line = ? WHERE id = ?',
+      );
+
+      // First pass: move all survivors to sentinel positions
+      for (const chunk of newChunks) {
+        const existing = existingByHash.get(chunk.contentHash);
+        if (
+          existing &&
+          (existing.file_path !== chunk.filePath || existing.chunk_index !== chunk.chunkIndex)
+        ) {
+          clearPosition.run(chunk.filePath, existing.id);
+        }
+      }
+
+      // Second pass: set correct positions + update line ranges
       for (const chunk of newChunks) {
         const existing = existingByHash.get(chunk.contentHash);
         if (existing) {
-          // Content hash matches — chunk survived, update position if needed
-          if (existing.file_path !== chunk.filePath || existing.chunk_index !== chunk.chunkIndex) {
+          if (
+            existing.file_path !== chunk.filePath ||
+            existing.chunk_index !== chunk.chunkIndex ||
+            existing.start_line !== chunk.startLine ||
+            existing.end_line !== chunk.endLine
+          ) {
+            updatePosition.run(
+              chunk.filePath,
+              chunk.chunkIndex,
+              chunk.startLine,
+              chunk.endLine,
+              existing.id,
+            );
             updated++;
           }
-        } else {
-          added++;
+          // reviewed, reviewed_at, tags, metadata, comments are all preserved
         }
-
-        upsertChunk.run({
-          prId: pr.id,
-          filePath: chunk.filePath,
-          chunkIndex: chunk.chunkIndex,
-          contentHash: chunk.contentHash,
-          diffText: chunk.diffText,
-          startLine: chunk.startLine,
-          endLine: chunk.endLine,
-        });
       }
 
-      // Remove chunks that no longer exist in the diff
-      for (const existing of existingChunks) {
-        if (!newHashes.has(existing.content_hash)) {
-          // Check if there's a chunk at the same position with different content
-          const replacement = newChunks.find(
-            (c) => c.filePath === existing.file_path && c.chunkIndex === existing.chunk_index,
-          );
-          if (replacement) {
-            // Content changed at same position — mark reviewed state as outdated
-            // The upsert above already updated the content; the reviewed state
-            // will be reset since it's a new content hash
-            outdated++;
-          } else {
-            // Chunk was removed entirely
-            this.db.prepare('DELETE FROM chunks WHERE id = ?').run(existing.id);
-            removed++;
-          }
+      // 3. Insert genuinely new chunks (hash not seen before).
+      const insertChunk = this.db.prepare(`
+        INSERT INTO chunks (pr_id, file_path, chunk_index, content_hash, diff_text, start_line, end_line)
+        VALUES (@prId, @filePath, @chunkIndex, @contentHash, @diffText, @startLine, @endLine)
+      `);
+
+      for (const chunk of newChunks) {
+        if (!existingByHash.has(chunk.contentHash)) {
+          insertChunk.run({
+            prId,
+            filePath: chunk.filePath,
+            chunkIndex: chunk.chunkIndex,
+            contentHash: chunk.contentHash,
+            diffText: chunk.diffText,
+            startLine: chunk.startLine,
+            endLine: chunk.endLine,
+          });
+          added++;
         }
       }
     });
 
-    upsertAll();
+    reconcile();
 
-    return { added, removed, updated, outdated };
+    return { added, removed, updated, outdated: 0 };
   }
 
   /**
