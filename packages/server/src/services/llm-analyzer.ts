@@ -290,10 +290,17 @@ export async function analyzePr(
     // Dynamic import to avoid hard dependency when SDK isn't available
     const { createOpencode } = await import('@opencode-ai/sdk/v2');
 
+    const totalChunks = fileDiffs.reduce((sum, fd) => sum + fd.chunks.length, 0);
+    console.log(
+      `[analyze] Starting analysis: ${fileDiffs.length} files, ${totalChunks} chunks`,
+    );
+
+    console.log('[analyze] Spinning up OpenCode instance...');
     const { client, server } = await createOpencode({ port: 0 });
 
     try {
       // Create a session for this analysis
+      console.log('[analyze] Creating session...');
       const sessionResult = await client.session.create({
         title: `PR #${prId} Analysis`,
       });
@@ -305,8 +312,14 @@ export async function analyzePr(
 
       // Build the prompt
       const prompt = buildAnalysisPrompt(prTitle, prBody, prAuthor, baseBranch, fileDiffs);
+      const promptKb = Math.round(Buffer.byteLength(prompt, 'utf8') / 1024);
+      const model = modelOverride
+        ? `${modelOverride.provider}/${modelOverride.model}`
+        : 'default';
+      console.log(`[analyze] Sending prompt (${promptKb} KB) to ${model}...`);
 
       // Send prompt with structured output
+      const startTime = Date.now();
       const response = await client.session.prompt({
         sessionID: session.id,
         parts: [{ type: 'text', text: prompt }],
@@ -319,6 +332,9 @@ export async function analyzePr(
           retryCount: 2,
         },
       });
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`[analyze] LLM responded in ${elapsed}s`);
 
       // Check for errors
       const data = response.data;
@@ -348,6 +364,10 @@ export async function analyzePr(
       // Store chunk metadata
       storeChunkMetadata(db, prId, run.id, result.chunkAssignments);
 
+      console.log(
+        `[analyze] Done: ${result.chunkAssignments.length} chunks tagged, ${result.suggestedTags.length} custom tags`,
+      );
+
       return result;
     } finally {
       server.close();
@@ -355,6 +375,7 @@ export async function analyzePr(
   } catch (error) {
     // Mark run as failed
     const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[analyze] Failed: ${msg}`);
     db.prepare(
       "UPDATE llm_runs SET status = 'failed', finished_at = datetime('now'), summary = ? WHERE id = ?",
     ).run(`Error: ${msg}`, run.id);
