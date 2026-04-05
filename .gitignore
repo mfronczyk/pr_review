@@ -22,6 +22,9 @@ Thumbs.db
 *.db-journal
 *.db-wal
 
+# Per-repo review database
+.pr-review/
+
 # Logs
 *.log
 npm-debug.log*

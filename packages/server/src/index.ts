@@ -43,11 +43,13 @@ export function createApp(db: Database.Database, repoPath: string): express.Expr
 
 // Initialize and start server when run directly
 if (process.env.NODE_ENV !== 'test') {
-  const db: Database.Database = initDatabase();
+  const dbPath = path.join(REPO_PATH, '.pr-review', 'data.db');
+  const db: Database.Database = initDatabase(dbPath);
   const app = createApp(db, REPO_PATH);
 
   app.listen(PORT, () => {
     console.log(`PR Review server running at http://localhost:${PORT}`);
     console.log(`Repo path: ${REPO_PATH}`);
+    console.log(`Database:  ${dbPath}`);
   });
 }

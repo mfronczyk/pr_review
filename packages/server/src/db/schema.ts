@@ -1,17 +1,16 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-
-const DB_DIR = path.join(os.homedir(), '.pr-review');
-const DB_PATH = path.join(DB_DIR, 'data.db');
 
 /**
  * Initialize the SQLite database with all required tables.
  * Uses WAL mode for better concurrent read performance.
+ *
+ * @param dbPath - Path to the SQLite database file (or ':memory:' for tests).
+ *                 For production use, pass `<repoPath>/.pr-review/data.db`.
  */
-export function initDatabase(dbPath?: string): Database.Database {
-  const resolvedPath = dbPath ?? DB_PATH;
+export function initDatabase(dbPath: string): Database.Database {
+  const resolvedPath = dbPath;
 
   // Ensure directory exists (skip for in-memory DBs)
   if (resolvedPath !== ':memory:') {

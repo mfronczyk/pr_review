@@ -38,7 +38,11 @@ export class GitService {
    */
   async fetchPr(prNumber: number, remote = 'origin'): Promise<string> {
     const localBranch = `pr-${prNumber}`;
-    await this.git('fetch', remote, `pull/${prNumber}/head:${localBranch}`, '--force');
+    try {
+      await this.git('fetch', remote, `pull/${prNumber}/head:${localBranch}`, '--force');
+    } catch (err) {
+      throw this.wrapFetchError(err, remote);
+    }
     return localBranch;
   }
 
@@ -75,7 +79,11 @@ export class GitService {
    * Fetch latest from remote.
    */
   async fetch(remote = 'origin'): Promise<void> {
-    await this.git('fetch', remote);
+    try {
+      await this.git('fetch', remote);
+    } catch (err) {
+      throw this.wrapFetchError(err, remote);
+    }
   }
 
   /**
@@ -108,5 +116,30 @@ export class GitService {
       }
       throw new Error('Could not determine default branch');
     }
+  }
+
+  /**
+   * Wrap a git fetch error with a helpful message that tells the user
+   * what to check and how to fix it.
+   */
+  private wrapFetchError(err: unknown, remote: string): Error {
+    const originalMessage = err instanceof Error ? err.message : String(err);
+    const message = [
+      `Git fetch failed for remote '${remote}'.`,
+      '',
+      'Make sure REPO_PATH points to a cloned git repository with an',
+      `'${remote}' remote configured.`,
+      '',
+      `  Repo path: ${this.repoPath}`,
+      '',
+      'To fix this, either:',
+      '  1. Clone the repository into that path:',
+      `     git clone <repo-url> ${this.repoPath}`,
+      '  2. Set REPO_PATH to an existing clone:',
+      '     REPO_PATH=/path/to/clone npm run dev',
+      '',
+      `Original error: ${originalMessage}`,
+    ].join('\n');
+    return new Error(message);
   }
 }
