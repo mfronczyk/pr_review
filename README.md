@@ -8,6 +8,12 @@
 
 ---
 
+## Screenshot
+
+A sample PR Review session in the app:
+
+![Screenshot of PR Review app interface](assets/README_screenshot.png)
+
 ## Table of Contents
 
 - [pr-review](#pr-review)
