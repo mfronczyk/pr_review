@@ -8,7 +8,9 @@ import type { Comment } from '@pr-review/shared';
 
 interface InlineCommentProps {
   comments: Comment[];
+  showForm: boolean;
   onAdd: (body: string) => Promise<void>;
+  onCancelForm: () => void;
   onUpdate: (id: number, body: string) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
   onPublish: (id: number) => Promise<void>;
@@ -133,10 +135,11 @@ function CommentItem({
 
 function AddCommentForm({
   onAdd,
+  onCancel,
 }: {
   onAdd: (body: string) => Promise<void>;
+  onCancel: () => void;
 }): React.ReactElement {
-  const [open, setOpen] = useState(false);
   const [body, setBody] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -146,22 +149,9 @@ function AddCommentForm({
     try {
       await onAdd(body.trim());
       setBody('');
-      setOpen(false);
     } finally {
       setSaving(false);
     }
-  }
-
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="text-xs text-fg-muted hover:text-blue-500"
-      >
-        + Add comment
-      </button>
-    );
   }
 
   return (
@@ -186,7 +176,7 @@ function AddCommentForm({
           type="button"
           onClick={() => {
             setBody('');
-            setOpen(false);
+            onCancel();
           }}
           className="rounded px-2 py-0.5 text-xs text-fg-tertiary hover:text-fg-primary"
         >
@@ -199,7 +189,9 @@ function AddCommentForm({
 
 export function InlineComment({
   comments,
+  showForm,
   onAdd,
+  onCancelForm,
   onUpdate,
   onDelete,
   onPublish,
@@ -215,7 +207,7 @@ export function InlineComment({
           onPublish={onPublish}
         />
       ))}
-      <AddCommentForm onAdd={onAdd} />
+      {showForm && <AddCommentForm onAdd={onAdd} onCancel={onCancelForm} />}
     </div>
   );
 }

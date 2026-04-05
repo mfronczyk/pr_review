@@ -195,12 +195,30 @@ const gutterStyles: Record<ParsedDiffLine['type'], string> = {
   empty: 'text-fg-muted',
 };
 
-function DiffLine({ parsed }: { parsed: ParsedDiffLine }): React.ReactElement {
+function DiffLine({
+  parsed,
+  onClickAdd,
+}: {
+  parsed: ParsedDiffLine;
+  onClickAdd?: () => void;
+}): React.ReactElement {
   const { bg, text } = lineStyles[parsed.type];
   const gutter = gutterStyles[parsed.type];
+  const canComment = parsed.type !== 'hunk-header' && parsed.type !== 'empty';
 
   return (
-    <div className={`flex ${bg}`}>
+    <div className={`group/line relative flex ${bg}`}>
+      {/* Add comment button — appears on hover in the gutter area */}
+      {canComment && onClickAdd && (
+        <button
+          type="button"
+          onClick={onClickAdd}
+          className="absolute left-0 top-0 z-10 flex h-5 w-5 items-center justify-center rounded bg-blue-600 text-xs font-bold text-white opacity-0 hover:bg-blue-500 group-hover/line:opacity-100"
+          title="Add comment"
+        >
+          +
+        </button>
+      )}
       {/* Old line number gutter */}
       <span
         className={`inline-block w-[50px] flex-shrink-0 select-none border-r border-border-secondary px-2 text-right font-mono text-xs leading-5 ${gutter}`}
@@ -245,6 +263,7 @@ function ChunkBlock({
   const prevReviewed = useRef(chunk.reviewed);
   const [animating, setAnimating] = useState<'collapsing' | 'expanding' | null>(null);
   const [contentHeight, setContentHeight] = useState<number | undefined>(undefined);
+  const [commentFormOpen, setCommentFormOpen] = useState(false);
 
   useEffect(() => {
     // Detect reviewed state transitions
@@ -304,16 +323,28 @@ function ChunkBlock({
           {chunk.metadata?.reviewNote && <ReviewNote note={chunk.metadata.reviewNote} />}
           <div className="font-mono">
             {parsedLines.map((parsed, i) => (
-              <DiffLine key={`${chunk.id}-${i}`} parsed={parsed} />
+              <DiffLine
+                key={`${chunk.id}-${i}`}
+                parsed={parsed}
+                onClickAdd={() => setCommentFormOpen(true)}
+              />
             ))}
           </div>
-          <InlineComment
-            comments={chunk.comments}
-            onAdd={onAddComment}
-            onUpdate={onUpdateComment}
-            onDelete={onDeleteComment}
-            onPublish={onPublishComment}
-          />
+          {/* Show existing comments + form only when there are comments or form is open */}
+          {(chunk.comments.length > 0 || commentFormOpen) && (
+            <InlineComment
+              comments={chunk.comments}
+              showForm={commentFormOpen}
+              onAdd={async (body) => {
+                await onAddComment(body);
+                setCommentFormOpen(false);
+              }}
+              onCancelForm={() => setCommentFormOpen(false)}
+              onUpdate={onUpdateComment}
+              onDelete={onDeleteComment}
+              onPublish={onPublishComment}
+            />
+          )}
         </div>
       )}
     </div>
