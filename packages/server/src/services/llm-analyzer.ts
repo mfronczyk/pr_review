@@ -1,6 +1,120 @@
-import type { LlmAnalysisResult, LlmChunkAssignment, Priority } from '@pr-review/shared';
+import type {
+  LlmAnalysisResult,
+  LlmChunkAssignment,
+  LlmModelInfo,
+  Priority,
+} from '@pr-review/shared';
 import type Database from 'better-sqlite3';
 import type { ParsedFileDiff } from './diff-parser.js';
+
+/**
+ * Validate that the OpenCode SDK is available and correctly configured.
+ * Spins up a temporary OpenCode instance, queries the active model,
+ * and returns the provider + model name.
+ *
+ * @throws {Error} if the SDK is not installed or no provider is configured
+ */
+export async function validateOpenCode(): Promise<LlmModelInfo> {
+  // 1. Check that the SDK can be imported
+  let createOpencode: (opts: { port: number }) => Promise<{
+    client: {
+      config: {
+        get: () => Promise<{ data?: { model?: string } }>;
+        providers: () => Promise<{
+          data?: {
+            providers: Array<{
+              id: string;
+              name: string;
+              models: Record<string, { name: string }>;
+            }>;
+            default: Record<string, string>;
+          };
+        }>;
+      };
+    };
+    server: { close: () => void };
+  }>;
+
+  try {
+    const sdk = await import('@opencode-ai/sdk/v2');
+    createOpencode = sdk.createOpencode;
+  } catch {
+    throw new Error(
+      'OpenCode SDK is not installed. Install it with:\n  npm install @opencode-ai/sdk',
+    );
+  }
+
+  // 2. Spin up a temporary instance and query the config
+  const { client, server } = await createOpencode({ port: 0 });
+  try {
+    // Check config for explicit model override
+    const configResult = await client.config.get();
+    const configModel = configResult.data?.model;
+
+    if (configModel) {
+      // Config model is typically "provider/model" format
+      const slashIdx = configModel.indexOf('/');
+      if (slashIdx > 0) {
+        return {
+          provider: configModel.substring(0, slashIdx),
+          model: configModel.substring(slashIdx + 1),
+        };
+      }
+    }
+
+    // Fall back to providers list to find the default
+    const providersResult = await client.config.providers();
+    const providersData = providersResult.data;
+
+    if (!providersData || providersData.providers.length === 0) {
+      throw new Error(
+        'No LLM providers configured in OpenCode.\n' +
+          'Configure a provider (e.g. Anthropic, OpenAI) in your OpenCode config:\n' +
+          '  ~/.config/opencode/config.json',
+      );
+    }
+
+    // The default map contains entries like { "chat": "anthropic" } mapping to provider IDs
+    // Find the first provider with models available
+    const defaults = providersData.default;
+    const defaultProviderKey = defaults.chat ?? defaults.code ?? Object.values(defaults)[0];
+
+    if (defaultProviderKey) {
+      // defaultProviderKey might be "provider/model" or just "provider"
+      const slashIdx = defaultProviderKey.indexOf('/');
+      if (slashIdx > 0) {
+        return {
+          provider: defaultProviderKey.substring(0, slashIdx),
+          model: defaultProviderKey.substring(slashIdx + 1),
+        };
+      }
+
+      // It's just a provider ID — find the first model in that provider
+      const provider = providersData.providers.find((p) => p.id === defaultProviderKey);
+      if (provider) {
+        const modelIds = Object.keys(provider.models);
+        if (modelIds.length > 0) {
+          return { provider: provider.id, model: modelIds[0] };
+        }
+      }
+    }
+
+    // Last resort: use the first provider's first model
+    const firstProvider = providersData.providers[0];
+    const firstModelId = Object.keys(firstProvider.models)[0];
+    if (firstModelId) {
+      return { provider: firstProvider.id, model: firstModelId };
+    }
+
+    throw new Error(
+      'No models available in any configured provider.\n' +
+        'Check your API keys and provider configuration in:\n' +
+        '  ~/.config/opencode/config.json',
+    );
+  } finally {
+    server.close();
+  }
+}
 
 export interface LlmAnalyzerOptions {
   db: Database.Database;

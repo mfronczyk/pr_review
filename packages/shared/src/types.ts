@@ -109,6 +109,13 @@ export interface CommentThread {
   replies: Comment[];
 }
 
+// ── LLM Model Info ──────────────────────────────────────────
+
+export interface LlmModelInfo {
+  provider: string;
+  model: string;
+}
+
 // ── LLM Run ─────────────────────────────────────────────────
 
 export type LlmRunStatus = 'running' | 'completed' | 'failed';

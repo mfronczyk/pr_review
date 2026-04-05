@@ -8,6 +8,7 @@ import type {
   ChunkWithDetails,
   Comment,
   LlmAnalysisResult,
+  LlmModelInfo,
   PrWithProgress,
   PullRequest,
   SyncResult,
@@ -64,6 +65,12 @@ export function syncPr(id: number): Promise<SyncResult> {
 
 export function analyzePr(id: number): Promise<LlmAnalysisResult> {
   return request(`/api/prs/${id}/analyze`, { method: 'POST' });
+}
+
+// ── LLM ─────────────────────────────────────────────────────
+
+export function getModelInfo(): Promise<LlmModelInfo> {
+  return request('/api/llm/model');
 }
 
 // ── Chunks ──────────────────────────────────────────────────

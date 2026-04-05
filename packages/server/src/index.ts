@@ -1,12 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { LlmModelInfo } from '@pr-review/shared';
 import type Database from 'better-sqlite3';
 import express from 'express';
 import { initDatabase } from './db/schema.js';
 import { createChunkRoutes } from './routes/chunks.js';
 import { createCommentRoutes } from './routes/comments.js';
 import { createPrRoutes } from './routes/prs.js';
+import { validateOpenCode } from './services/llm-analyzer.js';
 
 const PORT = Number.parseInt(process.env.PORT ?? '3420', 10);
 const REPO_PATH = process.env.REPO_PATH ?? process.cwd();
@@ -15,13 +17,26 @@ const REPO_PATH = process.env.REPO_PATH ?? process.cwd();
  * Create and configure the Express app.
  * Exported separately so tests can create an app with a custom DB.
  */
-export function createApp(db: Database.Database, repoPath: string): express.Express {
+export function createApp(
+  db: Database.Database,
+  repoPath: string,
+  modelInfo?: LlmModelInfo | null,
+): express.Express {
   const app = express();
   app.use(express.json());
 
   // Health check
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // LLM model info (cached from startup validation)
+  app.get('/api/llm/model', (_req, res) => {
+    if (!modelInfo) {
+      res.status(503).json({ error: 'LLM model info not available' });
+      return;
+    }
+    res.json(modelInfo);
   });
 
   // API routes
@@ -102,9 +117,25 @@ function validateRepoPath(repoPath: string): string {
 // Initialize and start server when run directly
 if (process.env.NODE_ENV !== 'test') {
   const remoteUrl = validateRepoPath(REPO_PATH);
+
+  // Validate OpenCode SDK and get active model info
+  let modelInfo: LlmModelInfo;
+  try {
+    console.log('Checking OpenCode configuration...');
+    modelInfo = await validateOpenCode();
+    console.log(`OpenCode OK: ${modelInfo.provider}/${modelInfo.model}`);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('\nError: OpenCode is not properly configured.\n');
+    console.error(`  ${msg}\n`);
+    console.error('Make sure OpenCode is installed and configured:');
+    console.error('  https://opencode.ai\n');
+    process.exit(1);
+  }
+
   const dbPath = path.join(REPO_PATH, '.pr-review', 'data.db');
   const db: Database.Database = initDatabase(dbPath);
-  const app = createApp(db, REPO_PATH);
+  const app = createApp(db, REPO_PATH, modelInfo);
 
   app.listen(PORT, () => {
     console.log(`PR Review server running at http://localhost:${PORT}`);

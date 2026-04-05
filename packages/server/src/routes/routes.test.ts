@@ -57,6 +57,27 @@ describe('GET /api/health', () => {
   });
 });
 
+describe('GET /api/llm/model', () => {
+  it('should return 503 when no model info is available', async () => {
+    const res = await request(app).get('/api/llm/model');
+    expect(res.status).toBe(503);
+    expect(res.body).toHaveProperty('error');
+  });
+
+  it('should return model info when provided at creation', async () => {
+    const appWithModel = createApp(db, '/tmp/test-repo', {
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+    });
+    const res = await request(appWithModel).get('/api/llm/model');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+    });
+  });
+});
+
 describe('GET /api/tags', () => {
   it('should return default tags', async () => {
     const res = await request(app).get('/api/tags');

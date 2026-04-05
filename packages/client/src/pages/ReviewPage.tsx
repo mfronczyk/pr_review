@@ -416,6 +416,7 @@ function Toolbar({
   syncing,
   analyzing,
   unpublishedCount,
+  modelLabel,
 }: {
   hideApproved: boolean;
   onToggleHideApproved: () => void;
@@ -425,6 +426,7 @@ function Toolbar({
   syncing: boolean;
   analyzing: boolean;
   unpublishedCount: number;
+  modelLabel: string | null;
 }): React.ReactElement {
   const [publishing, setPublishing] = useState(false);
 
@@ -475,7 +477,7 @@ function Toolbar({
           disabled={analyzing}
           className="rounded-md bg-purple-600 px-3 py-1 text-xs text-white hover:bg-purple-500 disabled:opacity-50 dark:bg-purple-700 dark:hover:bg-purple-600"
         >
-          {analyzing ? 'Analyzing...' : 'Analyze with LLM'}
+          {analyzing ? 'Analyzing...' : `Analyze with LLM${modelLabel ? ` (${modelLabel})` : ''}`}
         </button>
       </div>
     </div>
@@ -525,6 +527,13 @@ export function ReviewPage(): React.ReactElement {
   }, [fetchedChunks]);
 
   const { data: tags } = useAsync(() => api.getTags(), []);
+
+  const { data: modelInfo } = useAsync(() => api.getModelInfo(), []);
+
+  const modelLabel = useMemo((): string | null => {
+    if (!modelInfo) return null;
+    return `${modelInfo.provider}/${modelInfo.model}`;
+  }, [modelInfo]);
 
   const reload = useCallback(() => {
     reloadPr();
@@ -885,6 +894,7 @@ export function ReviewPage(): React.ReactElement {
           syncing={syncing}
           analyzing={analyzing}
           unpublishedCount={unpublishedCount}
+          modelLabel={modelLabel}
         />
 
         <div className="flex-1 overflow-hidden">

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ParsedFileDiff } from './diff-parser.js';
 import { buildAnalysisPrompt } from './llm-analyzer.js';
 
@@ -127,5 +127,143 @@ describe('ANALYSIS_SCHEMA', () => {
     expect(ANALYSIS_SCHEMA.required).toContain('suggested_tags');
     expect(ANALYSIS_SCHEMA.required).toContain('chunk_assignments');
     expect(ANALYSIS_SCHEMA.properties.chunk_assignments.type).toBe('array');
+  });
+});
+
+// ── validateOpenCode ────────────────────────────────────────
+
+/**
+ * Helper to create a mock SDK module with configurable config/providers responses.
+ */
+function mockSdk(options: {
+  configModel?: string;
+  providers?: Array<{ id: string; name: string; models: Record<string, { name: string }> }>;
+  defaultMap?: Record<string, string>;
+}) {
+  const serverClose = vi.fn();
+  return {
+    createOpencode: vi.fn().mockResolvedValue({
+      client: {
+        config: {
+          get: vi.fn().mockResolvedValue({
+            data: { model: options.configModel },
+          }),
+          providers: vi.fn().mockResolvedValue({
+            data: {
+              providers: options.providers ?? [],
+              default: options.defaultMap ?? {},
+            },
+          }),
+        },
+      },
+      server: { close: serverClose },
+    }),
+    serverClose,
+  };
+}
+
+describe('validateOpenCode', () => {
+  it('should return model info from config model override', async () => {
+    const mock = mockSdk({ configModel: 'anthropic/claude-sonnet-4-20250514' });
+    vi.doMock('@opencode-ai/sdk/v2', () => mock);
+
+    // Re-import to pick up the mock
+    const { validateOpenCode: validate } = await import('./llm-analyzer.js');
+    const result = await validate();
+
+    expect(result).toEqual({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-20250514',
+    });
+    expect(mock.serverClose).toHaveBeenCalled();
+
+    vi.doUnmock('@opencode-ai/sdk/v2');
+  });
+
+  it('should fall back to default provider/model from providers list', async () => {
+    const mock = mockSdk({
+      configModel: undefined,
+      providers: [
+        {
+          id: 'openai',
+          name: 'OpenAI',
+          models: { 'gpt-4o': { name: 'GPT-4o' } },
+        },
+      ],
+      defaultMap: { chat: 'openai/gpt-4o' },
+    });
+    vi.doMock('@opencode-ai/sdk/v2', () => mock);
+
+    const { validateOpenCode: validate } = await import('./llm-analyzer.js');
+    const result = await validate();
+
+    expect(result).toEqual({ provider: 'openai', model: 'gpt-4o' });
+    expect(mock.serverClose).toHaveBeenCalled();
+
+    vi.doUnmock('@opencode-ai/sdk/v2');
+  });
+
+  it('should use first provider model when default is just a provider ID', async () => {
+    const mock = mockSdk({
+      configModel: undefined,
+      providers: [
+        {
+          id: 'anthropic',
+          name: 'Anthropic',
+          models: {
+            'claude-sonnet-4-20250514': { name: 'Claude Sonnet' },
+            'claude-haiku-4-20250414': { name: 'Claude Haiku' },
+          },
+        },
+      ],
+      defaultMap: { chat: 'anthropic' },
+    });
+    vi.doMock('@opencode-ai/sdk/v2', () => mock);
+
+    const { validateOpenCode: validate } = await import('./llm-analyzer.js');
+    const result = await validate();
+
+    expect(result.provider).toBe('anthropic');
+    expect(result.model).toBeTruthy();
+    expect(mock.serverClose).toHaveBeenCalled();
+
+    vi.doUnmock('@opencode-ai/sdk/v2');
+  });
+
+  it('should throw when no providers are configured', async () => {
+    const mock = mockSdk({
+      configModel: undefined,
+      providers: [],
+      defaultMap: {},
+    });
+    vi.doMock('@opencode-ai/sdk/v2', () => mock);
+
+    const { validateOpenCode: validate } = await import('./llm-analyzer.js');
+
+    await expect(validate()).rejects.toThrow('No LLM providers configured');
+    expect(mock.serverClose).toHaveBeenCalled();
+
+    vi.doUnmock('@opencode-ai/sdk/v2');
+  });
+
+  it('should always close the server even on error', async () => {
+    const serverClose = vi.fn();
+    const createOpencode = vi.fn().mockResolvedValue({
+      client: {
+        config: {
+          get: vi.fn().mockRejectedValue(new Error('connection failed')),
+          providers: vi.fn(),
+        },
+      },
+      server: { close: serverClose },
+    });
+    vi.doMock('@opencode-ai/sdk/v2', () => ({ createOpencode }));
+
+    const { validateOpenCode: validate } = await import('./llm-analyzer.js');
+
+    await expect(validate()).rejects.toThrow('connection failed');
+    expect(serverClose).toHaveBeenCalled();
+
+    vi.doUnmock('@opencode-ai/sdk/v2');
   });
 });
