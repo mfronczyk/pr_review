@@ -270,9 +270,9 @@ function Sidebar({
   );
 
   return (
-    <aside className="flex w-64 flex-shrink-0 flex-col overflow-y-auto border-r border-gray-800 bg-gray-900">
-      {/* PR info */}
-      <div className="border-b border-gray-800 p-4">
+    <aside className="flex w-64 flex-shrink-0 flex-col border-r border-gray-800 bg-gray-900">
+      {/* PR info — fixed */}
+      <div className="flex-shrink-0 border-b border-gray-800 p-4">
         <Link to="/" className="text-xs text-gray-500 hover:text-gray-300">
           &larr; Back
         </Link>
@@ -295,8 +295,11 @@ function Sidebar({
         </div>
       </div>
 
-      {/* Groups section */}
-      <div className="border-b border-gray-800 p-4">
+      {/* Groups section — scrollable, max 40% of sidebar */}
+      <div
+        className="flex-shrink-0 overflow-y-auto border-b border-gray-800 p-4"
+        style={{ maxHeight: '40%' }}
+      >
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
           Groups
         </h3>
@@ -329,19 +332,22 @@ function Sidebar({
                   />
                   <span className="truncate">{g.tag.name}</span>
                 </div>
-                {g.reviewedCount < g.chunks.length && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onBulkApprove(g.tag.id);
-                    }}
-                    className="hidden flex-shrink-0 rounded bg-green-800 px-1.5 py-0.5 text-[10px] text-green-200 hover:bg-green-700 group-hover:block"
-                    title="Approve all"
-                  >
-                    Approve
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onBulkApprove(g.tag.id);
+                  }}
+                  className={`flex-shrink-0 rounded bg-green-800 px-1.5 py-0.5 text-[10px] text-green-200 hover:bg-green-700 ${
+                    g.reviewedCount < g.chunks.length
+                      ? 'opacity-0 group-hover:opacity-100'
+                      : 'invisible'
+                  }`}
+                  title="Approve all"
+                  disabled={g.reviewedCount >= g.chunks.length}
+                >
+                  Approve
+                </button>
               </div>
               <div className="mt-1 pl-4">
                 <ProgressDots
@@ -358,7 +364,7 @@ function Sidebar({
         </div>
       </div>
 
-      {/* Files section */}
+      {/* Files section — takes remaining space, scrollable */}
       <div className="flex-1 overflow-y-auto p-4">
         <button
           type="button"
