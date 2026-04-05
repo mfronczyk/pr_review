@@ -1,7 +1,7 @@
 # pr-review
 
 [![standard-readme compliant](https://img.shields.io/badge/readme%20style-standard-brightgreen.svg?style=flat-square)](https://github.com/RichardLitt/standard-readme)
-[![node](https://img.shields.io/badge/node-%3E=18.0.0-green.svg)](https://nodejs.org/)  
+[![node](https://img.shields.io/badge/node-%3E=22.0.0-green.svg)](https://nodejs.org/)
 <!-- Add build, coverage, and npm badges here when available -->
 
 > Monorepo for PR Review platform — a modern, best-practices TypeScript/Node.js web application, featuring client, server, and shared workspaces with robust tooling for development and code review automation.
@@ -53,8 +53,7 @@ pr-review/
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) >=18.0.0
-- [npm](https://www.npmjs.com/) >=7 (workspaces enabled)
+- [Node.js](https://nodejs.org/) >=22.0.0
 
 ## Installation
 
