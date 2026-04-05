@@ -19,6 +19,13 @@ interface GroupInfo {
   approvedCount: number;
 }
 
+// ── Helpers ─────────────────────────────────────────────────
+
+/** Returns true if the chunk has at least one unresolved comment thread. */
+function hasUnresolvedComments(chunk: ChunkWithDetails): boolean {
+  return chunk.comments.some((c) => c.parentId === null && !c.resolved);
+}
+
 // ── Error Banner ────────────────────────────────────────────
 
 function ErrorBanner({
@@ -410,6 +417,8 @@ const Sidebar = memo(function Sidebar({
 function Toolbar({
   hideApproved,
   onToggleHideApproved,
+  showUnresolved,
+  onToggleShowUnresolved,
   onSync,
   onAnalyze,
   onPublishAll,
@@ -420,6 +429,8 @@ function Toolbar({
 }: {
   hideApproved: boolean;
   onToggleHideApproved: () => void;
+  showUnresolved: boolean;
+  onToggleShowUnresolved: () => void;
   onSync: () => void;
   onAnalyze: () => void;
   onPublishAll: () => Promise<void>;
@@ -441,15 +452,26 @@ function Toolbar({
 
   return (
     <div className="flex items-center justify-between border-b border-border-primary bg-surface-primary px-4 py-2">
-      <label className="flex items-center gap-2 text-xs text-fg-tertiary">
-        <input
-          type="checkbox"
-          checked={hideApproved}
-          onChange={onToggleHideApproved}
-          className="rounded border-border-primary bg-surface-input text-blue-500 focus:ring-blue-500"
-        />
-        Hide approved
-      </label>
+      <div className="flex items-center gap-4">
+        <label className="flex items-center gap-2 text-xs text-fg-tertiary">
+          <input
+            type="checkbox"
+            checked={hideApproved}
+            onChange={onToggleHideApproved}
+            className="rounded border-border-primary bg-surface-input text-blue-500 focus:ring-blue-500"
+          />
+          Hide approved
+        </label>
+        <label className="flex items-center gap-2 text-xs text-fg-tertiary">
+          <input
+            type="checkbox"
+            checked={showUnresolved}
+            onChange={onToggleShowUnresolved}
+            className="rounded border-border-primary bg-surface-input text-blue-500 focus:ring-blue-500"
+          />
+          Show unresolved
+        </label>
+      </div>
       <div className="flex items-center gap-2">
         {unpublishedCount > 0 && (
           <button
@@ -497,6 +519,7 @@ export function ReviewPage(): React.ReactElement {
   const [scrollToFile, setScrollToFile] = useState<string | null>(null);
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [hideApproved, setHideApproved] = useState(false);
+  const [showUnresolved, setShowUnresolved] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -601,10 +624,15 @@ export function ReviewPage(): React.ReactElement {
       result = result.filter((c) => c.tags.some((t) => t.name === activeFilter.value));
     }
     if (hideApproved) {
-      result = result.filter((c) => !c.approved || departingChunkIds.has(c.id));
+      result = result.filter(
+        (c) =>
+          !c.approved ||
+          departingChunkIds.has(c.id) ||
+          (showUnresolved && hasUnresolvedComments(c)),
+      );
     }
     return result;
-  }, [chunks, activeFilter, hideApproved, departingChunkIds]);
+  }, [chunks, activeFilter, hideApproved, showUnresolved, departingChunkIds]);
 
   /** Called after a chunk's exit animation completes — remove it from the departing set. */
   const handleChunkDeparted = useCallback((chunkId: number): void => {
@@ -645,8 +673,12 @@ export function ReviewPage(): React.ReactElement {
       });
 
       // If approving with hideApproved on, animate the chunk out
+      // (unless showUnresolved is on and the chunk has unresolved comments)
       if (isApproving && hideApproved) {
-        setDepartingChunkIds((prev) => new Set(prev).add(chunkId));
+        const chunk = chunks?.find((c) => c.id === chunkId);
+        if (!showUnresolved || !chunk || !hasUnresolvedComments(chunk)) {
+          setDepartingChunkIds((prev) => new Set(prev).add(chunkId));
+        }
       }
 
       await withErrorHandling(async () => {
@@ -654,7 +686,7 @@ export function ReviewPage(): React.ReactElement {
         // No reloadPr() — progress is derived from local chunks state
       });
     },
-    [chunks, hideApproved, withErrorHandling],
+    [chunks, hideApproved, showUnresolved, withErrorHandling],
   );
 
   const handleBulkApprove = useCallback(
@@ -888,6 +920,8 @@ export function ReviewPage(): React.ReactElement {
         <Toolbar
           hideApproved={hideApproved}
           onToggleHideApproved={handleToggleHideApproved}
+          showUnresolved={showUnresolved}
+          onToggleShowUnresolved={() => setShowUnresolved((v) => !v)}
           onSync={handleSync}
           onAnalyze={handleAnalyze}
           onPublishAll={handlePublishAll}
