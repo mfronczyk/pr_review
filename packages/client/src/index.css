@@ -2,7 +2,98 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Design tokens for light / dark mode.
+ * Components use Tailwind classes like `bg-surface-primary`, `text-fg-primary`, etc.
+ * The `.dark` class on <html> switches the palette.
+ */
+
+:root {
+  /* Surfaces (backgrounds) */
+  --color-surface-page: 250 250 250; /* gray-50 */
+  --color-surface-primary: 255 255 255; /* white */
+  --color-surface-secondary: 243 244 246; /* gray-100 */
+  --color-surface-tertiary: 229 231 235; /* gray-200 */
+  --color-surface-active: 229 231 235; /* gray-200 */
+  --color-surface-input: 255 255 255; /* white */
+
+  /* Foregrounds (text) */
+  --color-fg-primary: 17 24 39; /* gray-900 */
+  --color-fg-secondary: 55 65 81; /* gray-700 */
+  --color-fg-tertiary: 107 114 128; /* gray-500 */
+  --color-fg-muted: 156 163 175; /* gray-400 */
+  --color-fg-faint: 209 213 219; /* gray-300 */
+
+  /* Borders */
+  --color-border-primary: 209 213 219; /* gray-300 */
+  --color-border-secondary: 229 231 235; /* gray-200 */
+
+  /* Diff colors */
+  --color-diff-add-bg: 220 252 231; /* green-100 */
+  --color-diff-add-fg: 22 101 52; /* green-800 */
+  --color-diff-del-bg: 254 226 226; /* red-100 */
+  --color-diff-del-fg: 153 27 27; /* red-800 */
+  --color-diff-info-bg: 219 234 254; /* blue-100 */
+  --color-diff-info-fg: 30 64 175; /* blue-800 */
+  --color-diff-note-bg: 254 249 195; /* yellow-100 */
+  --color-diff-note-fg: 133 77 14; /* yellow-800 */
+
+  /* Semantic: error banner */
+  --color-error-bg: 254 226 226; /* red-100 */
+  --color-error-fg: 153 27 27; /* red-800 */
+  --color-error-border: 252 165 165; /* red-300 */
+
+  /* Semantic: success */
+  --color-success-fg: 22 163 74; /* green-600 */
+
+  /* Scrollbar (for custom styling if needed) */
+  --color-scrollbar: 156 163 175; /* gray-400 */
+}
+
+.dark {
+  /* Surfaces (backgrounds) */
+  --color-surface-page: 3 7 18; /* gray-950 */
+  --color-surface-primary: 17 24 39; /* gray-900 */
+  --color-surface-secondary: 31 41 55; /* gray-800 */
+  --color-surface-tertiary: 55 65 81; /* gray-700 */
+  --color-surface-active: 31 41 55; /* gray-800 */
+  --color-surface-input: 31 41 55; /* gray-800 */
+
+  /* Foregrounds (text) */
+  --color-fg-primary: 243 244 246; /* gray-100 */
+  --color-fg-secondary: 209 213 219; /* gray-300 */
+  --color-fg-tertiary: 156 163 175; /* gray-400 */
+  --color-fg-muted: 107 114 128; /* gray-500 */
+  --color-fg-faint: 75 85 99; /* gray-600 */
+
+  /* Borders */
+  --color-border-primary: 55 65 81; /* gray-700 (was gray-800 in old code) */
+  --color-border-secondary: 31 41 55; /* gray-800 */
+
+  /* Diff colors */
+  --color-diff-add-bg: 6 78 59; /* green-950 with alpha */
+  --color-diff-add-fg: 134 239 172; /* green-300 */
+  --color-diff-del-bg: 69 10 10; /* red-950 with alpha */
+  --color-diff-del-fg: 252 165 165; /* red-300 */
+  --color-diff-info-bg: 23 37 84; /* blue-950 */
+  --color-diff-info-fg: 96 165 250; /* blue-400 */
+  --color-diff-note-bg: 69 53 0; /* yellow-950 */
+  --color-diff-note-fg: 253 224 71; /* yellow-200 */
+
+  /* Semantic: error banner */
+  --color-error-bg: 69 10 10; /* red-950 */
+  --color-error-fg: 252 165 165; /* red-300 */
+  --color-error-border: 127 29 29; /* red-800 */
+
+  /* Semantic: success */
+  --color-success-fg: 22 163 74; /* green-600 */
+
+  /* Scrollbar */
+  --color-scrollbar: 75 85 99; /* gray-600 */
+}
+
 body {
-  @apply bg-gray-950 text-gray-100;
+  background-color: rgb(var(--color-surface-page));
+  color: rgb(var(--color-fg-primary));
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }

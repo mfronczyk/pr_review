@@ -29,9 +29,9 @@ function ErrorBanner({
   onDismiss: () => void;
 }): React.ReactElement {
   return (
-    <div className="flex items-center justify-between border-b border-red-800 bg-red-950 px-4 py-2 text-xs text-red-300">
+    <div className="flex items-center justify-between border-b border-error-border bg-error-bg px-4 py-2 text-xs text-error-fg">
       <span>{message}</span>
-      <button type="button" onClick={onDismiss} className="ml-4 text-red-400 hover:text-white">
+      <button type="button" onClick={onDismiss} className="ml-4 text-red-500 hover:text-fg-primary">
         Dismiss
       </button>
     </div>
@@ -54,13 +54,13 @@ function ProgressDots({
     const pct = total === 0 ? 0 : Math.round((reviewed / total) * 100);
     return (
       <div className="flex items-center gap-1.5">
-        <div className="h-1 w-10 overflow-hidden rounded-full bg-gray-700">
+        <div className="h-1 w-10 overflow-hidden rounded-full bg-surface-tertiary">
           <div
             className="h-full rounded-full"
             style={{ width: `${pct}%`, backgroundColor: '#22c55e' }}
           />
         </div>
-        <span className="text-[10px] text-gray-500">
+        <span className="text-[10px] text-fg-muted">
           {reviewed}/{total}
         </span>
       </div>
@@ -177,13 +177,13 @@ function FileTreeNode({
       <button
         type="button"
         onClick={() => onFilterByFile(node.fullPath)}
-        className={`flex w-full items-center gap-1 rounded py-0.5 pr-1 text-left text-xs hover:bg-gray-800 ${
-          isActive ? 'bg-gray-800 text-white' : 'text-gray-300'
+        className={`flex w-full items-center gap-1 rounded py-0.5 pr-1 text-left text-xs hover:bg-surface-active ${
+          isActive ? 'bg-surface-active text-fg-primary' : 'text-fg-secondary'
         }`}
         style={{ paddingLeft: `${depth * 12 + 4}px` }}
         title={node.fullPath}
       >
-        <span className="flex-shrink-0 text-gray-600">~</span>
+        <span className="flex-shrink-0 text-fg-faint">~</span>
         <span className="truncate">{node.name}</span>
       </button>
     );
@@ -200,7 +200,7 @@ function FileTreeNode({
       <button
         type="button"
         onClick={() => onToggleDir(node.fullPath)}
-        className="flex w-full items-center gap-1 rounded py-0.5 pr-1 text-left text-xs text-gray-500 hover:bg-gray-800 hover:text-gray-300"
+        className="flex w-full items-center gap-1 rounded py-0.5 pr-1 text-left text-xs text-fg-muted hover:bg-surface-active hover:text-fg-secondary"
         style={{ paddingLeft: `${depth * 12 + 4}px` }}
       >
         <span className="flex-shrink-0 text-[10px]">{isCollapsed ? '▸' : '▾'}</span>
@@ -270,18 +270,18 @@ function Sidebar({
   );
 
   return (
-    <aside className="flex w-64 flex-shrink-0 flex-col border-r border-gray-800 bg-gray-900">
+    <aside className="flex w-64 flex-shrink-0 flex-col border-r border-border-primary bg-surface-primary">
       {/* PR info — fixed */}
-      <div className="flex-shrink-0 border-b border-gray-800 p-4">
-        <Link to="/" className="text-xs text-gray-500 hover:text-gray-300">
+      <div className="flex-shrink-0 border-b border-border-secondary p-4">
+        <Link to="/" className="text-xs text-fg-muted hover:text-fg-secondary">
           &larr; Back
         </Link>
-        <h2 className="mt-2 truncate text-sm font-semibold text-gray-100">{pr.title}</h2>
-        <p className="mt-1 text-xs text-gray-500">
+        <h2 className="mt-2 truncate text-sm font-semibold text-fg-primary">{pr.title}</h2>
+        <p className="mt-1 text-xs text-fg-muted">
           {pr.owner}/{pr.repo}#{pr.number}
         </p>
         <div className="mt-2 flex items-center gap-2">
-          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-700">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-tertiary">
             <div
               className="h-full rounded-full bg-green-500"
               style={{
@@ -289,7 +289,7 @@ function Sidebar({
               }}
             />
           </div>
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-fg-tertiary">
             {pr.reviewedChunks}/{pr.totalChunks}
           </span>
         </div>
@@ -297,17 +297,17 @@ function Sidebar({
 
       {/* Groups section — scrollable, max 40% of sidebar */}
       <div
-        className="flex-shrink-0 overflow-y-auto border-b border-gray-800 p-4"
+        className="flex-shrink-0 overflow-y-auto border-b border-border-secondary p-4"
         style={{ maxHeight: '40%' }}
       >
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-fg-muted">
           Groups
         </h3>
         {activeFilter && (
           <button
             type="button"
             onClick={onClearFilter}
-            className="mb-2 w-full rounded bg-gray-800 px-2 py-1 text-left text-xs text-gray-400 hover:text-white"
+            className="mb-2 w-full rounded bg-surface-secondary px-2 py-1 text-left text-xs text-fg-tertiary hover:text-fg-primary"
           >
             Clear filter &times;
           </button>
@@ -316,10 +316,10 @@ function Sidebar({
           {groups.map((g) => (
             <div
               key={g.tag.name}
-              className={`group rounded px-2 py-1.5 text-xs cursor-pointer hover:bg-gray-800 ${
+              className={`group rounded px-2 py-1.5 text-xs cursor-pointer hover:bg-surface-active ${
                 activeFilter?.type === 'tag' && activeFilter.value === g.tag.name
-                  ? 'bg-gray-800 text-white'
-                  : 'text-gray-300'
+                  ? 'bg-surface-active text-fg-primary'
+                  : 'text-fg-secondary'
               }`}
               onClick={() => onFilterByTag(g.tag.name)}
               onKeyDown={(e) => e.key === 'Enter' && onFilterByTag(g.tag.name)}
@@ -338,7 +338,7 @@ function Sidebar({
                     e.stopPropagation();
                     onBulkApprove(g.tag.id);
                   }}
-                  className={`flex-shrink-0 rounded bg-green-800 px-1.5 py-0.5 text-[10px] text-green-200 hover:bg-green-700 ${
+                  className={`flex-shrink-0 rounded bg-green-700 px-1.5 py-0.5 text-[10px] text-white hover:bg-green-600 dark:bg-green-800 dark:text-green-200 dark:hover:bg-green-700 ${
                     g.reviewedCount < g.chunks.length
                       ? 'opacity-0 group-hover:opacity-100'
                       : 'invisible'
@@ -359,7 +359,7 @@ function Sidebar({
             </div>
           ))}
           {groups.length === 0 && (
-            <p className="text-xs text-gray-600">No tags assigned yet. Run LLM analysis.</p>
+            <p className="text-xs text-fg-faint">No tags assigned yet. Run LLM analysis.</p>
           )}
         </div>
       </div>
@@ -369,7 +369,7 @@ function Sidebar({
         <button
           type="button"
           onClick={() => setFilesExpanded(!filesExpanded)}
-          className="mb-2 flex w-full items-center justify-between text-xs font-semibold uppercase tracking-wider text-gray-500"
+          className="mb-2 flex w-full items-center justify-between text-xs font-semibold uppercase tracking-wider text-fg-muted"
         >
           <span>Files ({files.length})</span>
           <span>{filesExpanded ? '▾' : '▸'}</span>
@@ -427,13 +427,13 @@ function Toolbar({
   }
 
   return (
-    <div className="flex items-center justify-between border-b border-gray-800 bg-gray-900 px-4 py-2">
-      <label className="flex items-center gap-2 text-xs text-gray-400">
+    <div className="flex items-center justify-between border-b border-border-primary bg-surface-primary px-4 py-2">
+      <label className="flex items-center gap-2 text-xs text-fg-tertiary">
         <input
           type="checkbox"
           checked={hideReviewed}
           onChange={onToggleHideReviewed}
-          className="rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500"
+          className="rounded border-border-primary bg-surface-input text-blue-500 focus:ring-blue-500"
         />
         Hide reviewed
       </label>
@@ -454,7 +454,7 @@ function Toolbar({
           type="button"
           onClick={onSync}
           disabled={syncing}
-          className="rounded-md border border-gray-700 bg-gray-800 px-3 py-1 text-xs text-gray-300 hover:bg-gray-700 disabled:opacity-50"
+          className="rounded-md border border-border-primary bg-surface-secondary px-3 py-1 text-xs text-fg-secondary hover:bg-surface-tertiary disabled:opacity-50"
         >
           {syncing ? 'Syncing...' : 'Sync'}
         </button>
@@ -462,7 +462,7 @@ function Toolbar({
           type="button"
           onClick={onAnalyze}
           disabled={analyzing}
-          className="rounded-md bg-purple-700 px-3 py-1 text-xs text-white hover:bg-purple-600 disabled:opacity-50"
+          className="rounded-md bg-purple-600 px-3 py-1 text-xs text-white hover:bg-purple-500 disabled:opacity-50 dark:bg-purple-700 dark:hover:bg-purple-600"
         >
           {analyzing ? 'Analyzing...' : 'Analyze with LLM'}
         </button>
@@ -651,15 +651,15 @@ export function ReviewPage(): React.ReactElement {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center text-gray-500">Loading...</div>
+      <div className="flex h-screen items-center justify-center text-fg-muted">Loading...</div>
     );
   }
 
   if (error || !pr) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-2">
-        <p className="text-red-400">{error ?? 'PR not found'}</p>
-        <Link to="/" className="text-sm text-blue-400 hover:underline">
+        <p className="text-red-500">{error ?? 'PR not found'}</p>
+        <Link to="/" className="text-sm text-blue-500 hover:underline">
           Back to Dashboard
         </Link>
       </div>
@@ -705,7 +705,7 @@ export function ReviewPage(): React.ReactElement {
 
         <div className="flex-1 overflow-hidden">
           {filteredChunks.length === 0 ? (
-            <div className="py-12 text-center text-gray-500">
+            <div className="py-12 text-center text-fg-muted">
               {hideReviewed
                 ? 'All chunks reviewed! Uncheck "Hide reviewed" to see them.'
                 : 'No chunks match the current filter.'}

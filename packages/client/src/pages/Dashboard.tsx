@@ -73,10 +73,10 @@ function AddPrForm({ onAdded }: { onAdded: () => void }): React.ReactElement {
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="https://github.com/owner/repo/pull/123 or owner/repo#123"
-          className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="w-full rounded-md border border-border-primary bg-surface-input px-3 py-2 text-sm text-fg-primary placeholder-fg-muted focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           disabled={loading}
         />
-        {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+        {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
       </div>
       <button
         type="submit"
@@ -101,13 +101,13 @@ function ProgressBar({
   const pct = total === 0 ? 0 : Math.round((reviewed / total) * 100);
   return (
     <div className="flex items-center gap-2">
-      <div className="h-2 w-24 overflow-hidden rounded-full bg-gray-700">
+      <div className="h-2 w-24 overflow-hidden rounded-full bg-surface-tertiary">
         <div
           className="h-full rounded-full bg-green-500 transition-all"
           style={{ width: `${pct}%` }}
         />
       </div>
-      <span className="text-xs text-gray-400">
+      <span className="text-xs text-fg-tertiary">
         {reviewed}/{total} ({pct}%)
       </span>
     </div>
@@ -118,14 +118,14 @@ function ProgressBar({
 
 function StateBadge({ state }: { state: string }): React.ReactElement {
   const colors: Record<string, string> = {
-    open: 'bg-green-900 text-green-300',
-    closed: 'bg-red-900 text-red-300',
-    merged: 'bg-purple-900 text-purple-300',
-    draft: 'bg-gray-700 text-gray-300',
+    open: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
+    closed: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300',
+    merged: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300',
+    draft: 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
   };
   return (
     <span
-      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${colors[state] ?? 'bg-gray-700 text-gray-300'}`}
+      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${colors[state] ?? colors.draft}`}
     >
       {state}
     </span>
@@ -142,18 +142,18 @@ function PrRow({
   onDelete: (id: number) => void;
 }): React.ReactElement {
   return (
-    <div className="group relative rounded-lg border border-gray-800 bg-gray-900 transition hover:border-gray-600">
+    <div className="group relative rounded-lg border border-border-secondary bg-surface-primary transition hover:border-border-primary">
       <Link to={`/pr/${pr.id}`} className="block p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-fg-muted">
                 {pr.owner}/{pr.repo}#{pr.number}
               </span>
               <StateBadge state={pr.state} />
             </div>
-            <h3 className="mt-1 truncate text-sm font-medium text-gray-100">{pr.title}</h3>
-            <p className="mt-1 text-xs text-gray-500">by {pr.author}</p>
+            <h3 className="mt-1 truncate text-sm font-medium text-fg-primary">{pr.title}</h3>
+            <p className="mt-1 text-xs text-fg-muted">by {pr.author}</p>
           </div>
           <div className="flex-shrink-0">
             <ProgressBar reviewed={pr.reviewedChunks} total={pr.totalChunks} />
@@ -166,7 +166,7 @@ function PrRow({
           e.preventDefault();
           onDelete(pr.id);
         }}
-        className="absolute right-2 top-2 hidden rounded px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-red-900/50 hover:text-red-300 group-hover:block"
+        className="absolute right-2 top-2 hidden rounded px-1.5 py-0.5 text-[10px] text-fg-muted hover:bg-red-100 hover:text-red-700 dark:hover:bg-red-900/50 dark:hover:text-red-300 group-hover:block"
         title="Remove PR"
       >
         Remove
@@ -189,7 +189,7 @@ export function Dashboard(): React.ReactElement {
     <div className="mx-auto max-w-4xl p-6">
       <div className="mb-6">
         <h1 className="mb-1 text-2xl font-bold">Pull Requests</h1>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-fg-tertiary">
           Add a PR to start reviewing. Diffs are fetched from your local git repo.
         </p>
       </div>
@@ -198,16 +198,16 @@ export function Dashboard(): React.ReactElement {
         <AddPrForm onAdded={reload} />
       </div>
 
-      {loading && <div className="py-12 text-center text-gray-500">Loading...</div>}
+      {loading && <div className="py-12 text-center text-fg-muted">Loading...</div>}
 
       {error && (
-        <div className="rounded-md border border-red-800 bg-red-950 p-4 text-sm text-red-300">
+        <div className="rounded-md border border-error-border bg-error-bg p-4 text-sm text-error-fg">
           {error}
         </div>
       )}
 
       {prs && prs.length === 0 && (
-        <div className="py-12 text-center text-gray-500">
+        <div className="py-12 text-center text-fg-muted">
           No PRs added yet. Paste a GitHub PR URL above to get started.
         </div>
       )}

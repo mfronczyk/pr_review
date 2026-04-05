@@ -1,6 +1,6 @@
 /**
- * DiffViewer – renders a list of diff chunks as a virtualized scroll view.
- * Groups chunks by file and displays unified diff with color-coded lines.
+ * DiffViewer – renders diff chunks grouped by file in bordered boxes (like GitHub PRs).
+ * Each file is a rounded container with a sticky header and all its chunks inside.
  * Uses @tanstack/react-virtual for efficient rendering of large PRs.
  */
 
@@ -21,10 +21,12 @@ interface DiffViewerProps {
   onPublishComment: (commentId: number) => Promise<void>;
 }
 
-/** A flattened row is either a file header or a chunk block. */
-type VirtualRow =
-  | { type: 'file-header'; filePath: string; chunkCount: number; allReviewed: boolean }
-  | { type: 'chunk'; chunk: ChunkWithDetails };
+/** Each virtual row is one file group (header + all chunks). */
+interface FileGroup {
+  filePath: string;
+  chunks: ChunkWithDetails[];
+  allReviewed: boolean;
+}
 
 // ── Tag Pill ────────────────────────────────────────────────
 
@@ -51,9 +53,10 @@ function PriorityBadge({
   priority: string;
 }): React.ReactElement | null {
   const styles: Record<string, string> = {
-    high: 'bg-red-900/50 text-red-300 border-red-700',
-    medium: 'bg-yellow-900/50 text-yellow-300 border-yellow-700',
-    low: 'bg-gray-800 text-gray-400 border-gray-700',
+    high: 'bg-red-100 text-red-700 border-red-300 dark:bg-red-900/50 dark:text-red-300 dark:border-red-700',
+    medium:
+      'bg-yellow-100 text-yellow-700 border-yellow-300 dark:bg-yellow-900/50 dark:text-yellow-300 dark:border-yellow-700',
+    low: 'bg-surface-secondary text-fg-tertiary border-border-primary',
   };
   return (
     <span
@@ -69,26 +72,32 @@ function PriorityBadge({
 function ChunkHeader({
   chunk,
   onToggle,
+  isLast,
 }: {
   chunk: ChunkWithDetails;
   onToggle: () => void;
+  isLast: boolean;
 }): React.ReactElement {
   return (
-    <div className="flex items-center gap-2 border-b border-gray-800 bg-gray-900 px-3 py-1.5">
+    <div
+      className={`flex items-center gap-2 border-t border-border-secondary bg-surface-secondary px-3 py-1.5 ${
+        chunk.reviewed && isLast ? '' : ''
+      }`}
+    >
       <button
         type="button"
         onClick={onToggle}
         className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border text-xs ${
           chunk.reviewed
             ? 'border-green-600 bg-green-600 text-white'
-            : 'border-gray-600 bg-transparent text-transparent hover:border-gray-400'
+            : 'border-fg-faint bg-transparent text-transparent hover:border-fg-tertiary'
         }`}
         title={chunk.reviewed ? 'Mark unreviewed' : 'Mark reviewed'}
       >
         {chunk.reviewed ? '✓' : ''}
       </button>
 
-      <span className="text-xs text-gray-500">
+      <span className="text-xs text-fg-muted">
         L{chunk.startLine}–{chunk.endLine}
       </span>
 
@@ -99,12 +108,12 @@ function ChunkHeader({
       {chunk.metadata?.priority && <PriorityBadge priority={chunk.metadata.priority} />}
 
       {chunk.comments.length > 0 && (
-        <span className="text-xs text-gray-500">
+        <span className="text-xs text-fg-muted">
           {chunk.comments.length} comment{chunk.comments.length !== 1 ? 's' : ''}
         </span>
       )}
 
-      {chunk.reviewed && <span className="ml-auto text-[10px] text-green-600">Reviewed</span>}
+      {chunk.reviewed && <span className="ml-auto text-[10px] text-success-fg">Reviewed</span>}
     </div>
   );
 }
@@ -113,7 +122,7 @@ function ChunkHeader({
 
 function ReviewNote({ note }: { note: string }): React.ReactElement {
   return (
-    <div className="border-b border-gray-800 bg-yellow-950/30 px-3 py-1 text-xs text-yellow-200">
+    <div className="border-t border-border-secondary bg-diff-note-bg px-3 py-1 text-xs text-diff-note-fg">
       <span className="mr-1">⚡</span>
       {note}
     </div>
@@ -124,17 +133,17 @@ function ReviewNote({ note }: { note: string }): React.ReactElement {
 
 function DiffLine({ line }: { line: string }): React.ReactElement {
   let bgClass = '';
-  let textClass = 'text-gray-300';
+  let textClass = 'text-fg-secondary';
 
   if (line.startsWith('+')) {
-    bgClass = 'bg-green-950/40';
-    textClass = 'text-green-300';
+    bgClass = 'bg-diff-add-bg/40';
+    textClass = 'text-diff-add-fg';
   } else if (line.startsWith('-')) {
-    bgClass = 'bg-red-950/40';
-    textClass = 'text-red-300';
+    bgClass = 'bg-diff-del-bg/40';
+    textClass = 'text-diff-del-fg';
   } else if (line.startsWith('@@')) {
-    bgClass = 'bg-blue-950/30';
-    textClass = 'text-blue-400';
+    bgClass = 'bg-diff-info-bg/30';
+    textClass = 'text-diff-info-fg';
   }
 
   return (
@@ -153,6 +162,7 @@ function ChunkBlock({
   onUpdateComment,
   onDeleteComment,
   onPublishComment,
+  isLast,
 }: {
   chunk: ChunkWithDetails;
   onToggleReviewed: () => void;
@@ -160,21 +170,22 @@ function ChunkBlock({
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
   onPublishComment: (commentId: number) => Promise<void>;
+  isLast: boolean;
 }): React.ReactElement {
   const lines = chunk.diffText.split('\n');
 
-  // Collapsed view for reviewed chunks when visible
+  // Collapsed view for reviewed chunks
   if (chunk.reviewed) {
     return (
-      <div className="border-b border-gray-800 opacity-60">
-        <ChunkHeader chunk={chunk} onToggle={onToggleReviewed} />
+      <div className="opacity-60">
+        <ChunkHeader chunk={chunk} onToggle={onToggleReviewed} isLast={isLast} />
       </div>
     );
   }
 
   return (
-    <div className="border-b border-gray-800">
-      <ChunkHeader chunk={chunk} onToggle={onToggleReviewed} />
+    <div>
+      <ChunkHeader chunk={chunk} onToggle={onToggleReviewed} isLast={isLast} />
       {chunk.metadata?.reviewNote && <ReviewNote note={chunk.metadata.reviewNote} />}
       <div className="font-mono">
         {lines.map((line, i) => (
@@ -192,64 +203,48 @@ function ChunkBlock({
   );
 }
 
-// ── File Header ─────────────────────────────────────────────
+// ── File Box ────────────────────────────────────────────────
 
-function FileHeader({
-  filePath,
-  chunkCount,
-  allReviewed,
-}: {
-  filePath: string;
-  chunkCount: number;
-  allReviewed: boolean;
-}): React.ReactElement {
-  return (
-    <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-gray-700 bg-gray-950 px-4 py-2">
-      <span className="font-mono text-xs text-gray-300">{filePath}</span>
-      <span className="text-xs text-gray-600">
-        ({chunkCount} chunk{chunkCount !== 1 ? 's' : ''})
-      </span>
-      {allReviewed && <span className="text-xs text-green-600">✓ All reviewed</span>}
-    </div>
-  );
-}
-
-// ── Virtual Row Renderer ────────────────────────────────────
-
-function VirtualRowRenderer({
-  row,
+function FileBox({
+  group,
   onToggleReviewed,
   onAddComment,
   onUpdateComment,
   onDeleteComment,
   onPublishComment,
 }: {
-  row: VirtualRow;
+  group: FileGroup;
   onToggleReviewed: (chunkId: number) => void;
   onAddComment: (chunkId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
   onPublishComment: (commentId: number) => Promise<void>;
 }): React.ReactElement {
-  if (row.type === 'file-header') {
-    return (
-      <FileHeader
-        filePath={row.filePath}
-        chunkCount={row.chunkCount}
-        allReviewed={row.allReviewed}
-      />
-    );
-  }
-
   return (
-    <ChunkBlock
-      chunk={row.chunk}
-      onToggleReviewed={() => onToggleReviewed(row.chunk.id)}
-      onAddComment={(body) => onAddComment(row.chunk.id, body)}
-      onUpdateComment={onUpdateComment}
-      onDeleteComment={onDeleteComment}
-      onPublishComment={onPublishComment}
-    />
+    <div className="overflow-hidden rounded-lg border border-border-primary bg-surface-primary">
+      {/* File header — sticky within file box */}
+      <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border-primary bg-surface-secondary px-4 py-2">
+        <span className="font-mono text-xs text-fg-primary font-medium">{group.filePath}</span>
+        <span className="text-xs text-fg-muted">
+          ({group.chunks.length} chunk{group.chunks.length !== 1 ? 's' : ''})
+        </span>
+        {group.allReviewed && <span className="text-xs text-success-fg">✓ All reviewed</span>}
+      </div>
+
+      {/* Chunks */}
+      {group.chunks.map((chunk, i) => (
+        <ChunkBlock
+          key={chunk.id}
+          chunk={chunk}
+          onToggleReviewed={() => onToggleReviewed(chunk.id)}
+          onAddComment={(body) => onAddComment(chunk.id, body)}
+          onUpdateComment={onUpdateComment}
+          onDeleteComment={onDeleteComment}
+          onPublishComment={onPublishComment}
+          isLast={i === group.chunks.length - 1}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -265,8 +260,8 @@ export function DiffViewer({
 }: DiffViewerProps): React.ReactElement {
   const parentRef = useRef<HTMLDivElement>(null);
 
-  // Build file groups then flatten into virtual rows
-  const rows = useMemo((): VirtualRow[] => {
+  // Group chunks by file, each group becomes one virtual row (file box)
+  const fileGroups = useMemo((): FileGroup[] => {
     const map = new Map<string, ChunkWithDetails[]>();
     for (const chunk of chunks) {
       const existing = map.get(chunk.filePath);
@@ -277,47 +272,47 @@ export function DiffViewer({
       }
     }
 
-    const result: VirtualRow[] = [];
+    const result: FileGroup[] = [];
     for (const [filePath, fileChunks] of map) {
       const sorted = fileChunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
       result.push({
-        type: 'file-header',
         filePath,
-        chunkCount: sorted.length,
+        chunks: sorted,
         allReviewed: sorted.every((c) => c.reviewed),
       });
-      for (const chunk of sorted) {
-        result.push({ type: 'chunk', chunk });
-      }
     }
     return result;
   }, [chunks]);
 
-  // Estimate row height: file headers are ~36px, reviewed chunks ~32px,
-  // unreviewed chunks vary by diff line count
+  // Estimate file box height: header ~36px + each chunk varies
   const estimateSize = useCallback(
     (index: number): number => {
-      const row = rows[index];
-      if (row.type === 'file-header') return 36;
-      const chunk = row.chunk;
-      if (chunk.reviewed) return 32;
-      const lineCount = chunk.diffText.split('\n').length;
-      // ~20px per diff line + 32px header + 40px comment area + optional note
-      const noteHeight = chunk.metadata?.reviewNote ? 28 : 0;
-      return 32 + noteHeight + lineCount * 20 + 40;
+      const group = fileGroups[index];
+      let height = 36; // file header
+      for (const chunk of group.chunks) {
+        if (chunk.reviewed) {
+          height += 32; // collapsed chunk header
+        } else {
+          const lineCount = chunk.diffText.split('\n').length;
+          const noteHeight = chunk.metadata?.reviewNote ? 28 : 0;
+          // chunk header + note + diff lines + comment area
+          height += 32 + noteHeight + lineCount * 20 + 40;
+        }
+      }
+      return height + 32; // bottom margin between file boxes
     },
-    [rows],
+    [fileGroups],
   );
 
   const virtualizer = useVirtualizer({
-    count: rows.length,
+    count: fileGroups.length,
     getScrollElement: () => parentRef.current,
     estimateSize,
-    overscan: 5,
+    overscan: 3,
   });
 
   return (
-    <div ref={parentRef} className="h-full overflow-y-auto">
+    <div ref={parentRef} className="h-full overflow-y-auto bg-surface-page p-4">
       <div
         style={{
           height: `${virtualizer.getTotalSize()}px`,
@@ -336,10 +331,11 @@ export function DiffViewer({
               left: 0,
               width: '100%',
               transform: `translateY(${virtualRow.start}px)`,
+              paddingBottom: '16px', // gap between file boxes
             }}
           >
-            <VirtualRowRenderer
-              row={rows[virtualRow.index]}
+            <FileBox
+              group={fileGroups[virtualRow.index]}
               onToggleReviewed={onToggleReviewed}
               onAddComment={onAddComment}
               onUpdateComment={onUpdateComment}
