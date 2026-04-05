@@ -163,8 +163,10 @@ if (process.env.NODE_ENV !== 'test') {
 
   // Log available models for discoverability
   if (availableModels.length > 1) {
-    const modelList = availableModels.map((m) => `${m.provider}/${m.model}`).join(', ');
-    console.log(`Available:  ${modelList}`);
+    console.log('Available models:');
+    for (const m of availableModels) {
+      console.log(`  ${m.provider}/${m.model}`);
+    }
   }
 
   const dbPath = path.join(REPO_PATH, '.pr-review', 'data.db');
