@@ -129,26 +129,92 @@ function ReviewNote({ note }: { note: string }): React.ReactElement {
   );
 }
 
-// ── Diff Line ───────────────────────────────────────────────
+// ── Line Number Parsing ─────────────────────────────────────
 
-function DiffLine({ line }: { line: string }): React.ReactElement {
-  let bgClass = '';
-  let textClass = 'text-fg-secondary';
+interface ParsedDiffLine {
+  type: 'context' | 'add' | 'del' | 'hunk-header' | 'empty';
+  text: string;
+  oldLineNum: number | null;
+  newLineNum: number | null;
+}
 
-  if (line.startsWith('+')) {
-    bgClass = 'bg-diff-add-bg/40';
-    textClass = 'text-diff-add-fg';
-  } else if (line.startsWith('-')) {
-    bgClass = 'bg-diff-del-bg/40';
-    textClass = 'text-diff-del-fg';
-  } else if (line.startsWith('@@')) {
-    bgClass = 'bg-diff-info-bg/30';
-    textClass = 'text-diff-info-fg';
+/**
+ * Parse a chunk's diff text into structured lines with line numbers.
+ * Tracks old/new line counters based on @@ hunk headers.
+ */
+function parseDiffLines(diffText: string): ParsedDiffLine[] {
+  const rawLines = diffText.split('\n');
+  const result: ParsedDiffLine[] = [];
+  let oldLine = 0;
+  let newLine = 0;
+
+  for (const line of rawLines) {
+    if (line.startsWith('@@')) {
+      // Parse hunk header: @@ -oldStart[,oldCount] +newStart[,newCount] @@
+      const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (match) {
+        oldLine = Number.parseInt(match[1], 10);
+        newLine = Number.parseInt(match[2], 10);
+      }
+      result.push({ type: 'hunk-header', text: line, oldLineNum: null, newLineNum: null });
+    } else if (line.startsWith('+')) {
+      result.push({ type: 'add', text: line, oldLineNum: null, newLineNum: newLine });
+      newLine++;
+    } else if (line.startsWith('-')) {
+      result.push({ type: 'del', text: line, oldLineNum: oldLine, newLineNum: null });
+      oldLine++;
+    } else if (line === '') {
+      // Trailing empty line at end of chunk
+      result.push({ type: 'empty', text: '', oldLineNum: null, newLineNum: null });
+    } else {
+      // Context line (starts with space or is plain text)
+      result.push({ type: 'context', text: line, oldLineNum: oldLine, newLineNum: newLine });
+      oldLine++;
+      newLine++;
+    }
   }
 
+  return result;
+}
+
+// ── Diff Line ───────────────────────────────────────────────
+
+const lineStyles: Record<ParsedDiffLine['type'], { bg: string; text: string }> = {
+  add: { bg: 'bg-diff-add-bg', text: 'text-diff-add-fg' },
+  del: { bg: 'bg-diff-del-bg', text: 'text-diff-del-fg' },
+  'hunk-header': { bg: 'bg-diff-info-bg/30', text: 'text-diff-info-fg' },
+  context: { bg: '', text: 'text-fg-secondary' },
+  empty: { bg: '', text: 'text-fg-secondary' },
+};
+
+const gutterStyles: Record<ParsedDiffLine['type'], string> = {
+  add: 'bg-diff-add-bg text-diff-add-fg/60',
+  del: 'bg-diff-del-bg text-diff-del-fg/60',
+  'hunk-header': 'bg-diff-info-bg/30 text-diff-info-fg/50',
+  context: 'text-fg-muted',
+  empty: 'text-fg-muted',
+};
+
+function DiffLine({ parsed }: { parsed: ParsedDiffLine }): React.ReactElement {
+  const { bg, text } = lineStyles[parsed.type];
+  const gutter = gutterStyles[parsed.type];
+
   return (
-    <div className={`px-3 ${bgClass}`}>
-      <code className={`text-xs leading-5 ${textClass}`}>{line || ' '}</code>
+    <div className={`flex ${bg}`}>
+      {/* Old line number gutter */}
+      <span
+        className={`inline-block w-[50px] flex-shrink-0 select-none border-r border-border-secondary px-2 text-right font-mono text-xs leading-5 ${gutter}`}
+      >
+        {parsed.oldLineNum ?? ''}
+      </span>
+      {/* New line number gutter */}
+      <span
+        className={`inline-block w-[50px] flex-shrink-0 select-none border-r border-border-secondary px-2 text-right font-mono text-xs leading-5 ${gutter}`}
+      >
+        {parsed.newLineNum ?? ''}
+      </span>
+      {/* Code content */}
+      <code className={`flex-1 px-3 text-xs leading-5 ${text}`}>{parsed.text || ' '}</code>
     </div>
   );
 }
@@ -172,7 +238,7 @@ function ChunkBlock({
   onPublishComment: (commentId: number) => Promise<void>;
   isLast: boolean;
 }): React.ReactElement {
-  const lines = chunk.diffText.split('\n');
+  const parsedLines = useMemo(() => parseDiffLines(chunk.diffText), [chunk.diffText]);
 
   // Collapsed view for reviewed chunks
   if (chunk.reviewed) {
@@ -188,8 +254,8 @@ function ChunkBlock({
       <ChunkHeader chunk={chunk} onToggle={onToggleReviewed} isLast={isLast} />
       {chunk.metadata?.reviewNote && <ReviewNote note={chunk.metadata.reviewNote} />}
       <div className="font-mono">
-        {lines.map((line, i) => (
-          <DiffLine key={`${chunk.id}-${i}`} line={line} />
+        {parsedLines.map((parsed, i) => (
+          <DiffLine key={`${chunk.id}-${i}`} parsed={parsed} />
         ))}
       </div>
       <InlineComment
