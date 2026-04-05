@@ -28,15 +28,17 @@
   --color-border-primary: 209 213 219; /* gray-300 */
   --color-border-secondary: 229 231 235; /* gray-200 */
 
-  /* Diff colors */
-  --color-diff-add-bg: 220 252 231; /* green-100 */
-  --color-diff-add-fg: 22 101 52; /* green-800 */
-  --color-diff-del-bg: 254 226 226; /* red-100 */
-  --color-diff-del-fg: 153 27 27; /* red-800 */
-  --color-diff-info-bg: 219 234 254; /* blue-100 */
-  --color-diff-info-fg: 30 64 175; /* blue-800 */
-  --color-diff-note-bg: 254 249 195; /* yellow-100 */
-  --color-diff-note-fg: 133 77 14; /* yellow-800 */
+  /* Diff colors — matches GitHub's Primer light theme */
+  --color-diff-add-bg: 218 251 225; /* #dafbe1 — GitHub added line bg */
+  --color-diff-add-gutter: 187 239 200; /* #bbdfc8 — slightly deeper for gutter */
+  --color-diff-add-fg: 36 41 47; /* normal dark text on green bg */
+  --color-diff-del-bg: 255 235 233; /* #ffebe9 — GitHub deleted line bg */
+  --color-diff-del-gutter: 255 215 213; /* #ffd7d5 — slightly deeper for gutter */
+  --color-diff-del-fg: 36 41 47; /* normal dark text on red bg */
+  --color-diff-info-bg: 221 244 255; /* #ddf4ff — GitHub accent-muted */
+  --color-diff-info-fg: 9 105 218; /* #0969da — GitHub accent */
+  --color-diff-note-bg: 255 248 197; /* #fff8c5 — GitHub attention-muted */
+  --color-diff-note-fg: 154 103 0; /* #9a6700 — GitHub attention */
 
   /* Semantic: error banner */
   --color-error-bg: 254 226 226; /* red-100 */
@@ -70,15 +72,17 @@
   --color-border-primary: 55 65 81; /* gray-700 (was gray-800 in old code) */
   --color-border-secondary: 31 41 55; /* gray-800 */
 
-  /* Diff colors */
-  --color-diff-add-bg: 6 78 59; /* green-950 with alpha */
-  --color-diff-add-fg: 134 239 172; /* green-300 */
-  --color-diff-del-bg: 69 10 10; /* red-950 with alpha */
-  --color-diff-del-fg: 252 165 165; /* red-300 */
-  --color-diff-info-bg: 23 37 84; /* blue-950 */
-  --color-diff-info-fg: 96 165 250; /* blue-400 */
-  --color-diff-note-bg: 69 53 0; /* yellow-950 */
-  --color-diff-note-fg: 253 224 71; /* yellow-200 */
+  /* Diff colors — matches GitHub's Primer dark theme */
+  --color-diff-add-bg: 28 56 41; /* rgba(46,160,67,0.15) on #0d1117 ≈ #1c3829 */
+  --color-diff-add-gutter: 35 74 53; /* slightly deeper for gutter */
+  --color-diff-add-fg: 230 237 243; /* normal light text on green bg */
+  --color-diff-del-bg: 67 28 33; /* rgba(248,81,73,0.15) on #0d1117 ≈ #431c21 */
+  --color-diff-del-gutter: 87 36 38; /* slightly deeper for gutter */
+  --color-diff-del-fg: 230 237 243; /* normal light text on red bg */
+  --color-diff-info-bg: 18 35 58; /* GitHub dark accent-muted */
+  --color-diff-info-fg: 88 166 255; /* GitHub dark accent */
+  --color-diff-note-bg: 52 43 8; /* GitHub dark attention-muted */
+  --color-diff-note-fg: 210 167 36; /* GitHub dark attention */
 
   /* Semantic: error banner */
   --color-error-bg: 69 10 10; /* red-950 */

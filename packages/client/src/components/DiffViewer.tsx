@@ -5,7 +5,7 @@
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { InlineComment } from '@/components/InlineComment';
 import type { ChunkWithDetails } from '@pr-review/shared';
@@ -188,8 +188,8 @@ const lineStyles: Record<ParsedDiffLine['type'], { bg: string; text: string }> =
 };
 
 const gutterStyles: Record<ParsedDiffLine['type'], string> = {
-  add: 'bg-diff-add-bg text-diff-add-fg/60',
-  del: 'bg-diff-del-bg text-diff-del-fg/60',
+  add: 'bg-diff-add-gutter text-diff-add-fg/60',
+  del: 'bg-diff-del-gutter text-diff-del-fg/60',
   'hunk-header': 'bg-diff-info-bg/30 text-diff-info-fg/50',
   context: 'text-fg-muted',
   empty: 'text-fg-muted',
@@ -221,6 +221,8 @@ function DiffLine({ parsed }: { parsed: ParsedDiffLine }): React.ReactElement {
 
 // ── Chunk Block ─────────────────────────────────────────────
 
+const COLLAPSE_DURATION_MS = 300;
+
 function ChunkBlock({
   chunk,
   onToggleReviewed,
@@ -239,32 +241,81 @@ function ChunkBlock({
   isLast: boolean;
 }): React.ReactElement {
   const parsedLines = useMemo(() => parseDiffLines(chunk.diffText), [chunk.diffText]);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const prevReviewed = useRef(chunk.reviewed);
+  const [animating, setAnimating] = useState<'collapsing' | 'expanding' | null>(null);
+  const [contentHeight, setContentHeight] = useState<number | undefined>(undefined);
 
-  // Collapsed view for reviewed chunks
-  if (chunk.reviewed) {
-    return (
-      <div className="opacity-60">
-        <ChunkHeader chunk={chunk} onToggle={onToggleReviewed} isLast={isLast} />
-      </div>
-    );
-  }
+  useEffect(() => {
+    // Detect reviewed state transitions
+    if (prevReviewed.current !== chunk.reviewed) {
+      const el = contentRef.current;
+      if (chunk.reviewed && el) {
+        // Collapsing: capture current height, then animate to 0
+        setContentHeight(el.scrollHeight);
+        setAnimating('collapsing');
+        // Force a reflow so the browser registers the starting height
+        void el.offsetHeight;
+        requestAnimationFrame(() => {
+          setContentHeight(0);
+        });
+      } else if (!chunk.reviewed) {
+        // Expanding: start at 0, animate to auto (via scrollHeight)
+        setAnimating('expanding');
+        setContentHeight(0);
+        requestAnimationFrame(() => {
+          if (contentRef.current) {
+            setContentHeight(contentRef.current.scrollHeight);
+          }
+        });
+      }
+      prevReviewed.current = chunk.reviewed;
+    }
+  }, [chunk.reviewed]);
+
+  useEffect(() => {
+    if (animating === null) return;
+    const timer = setTimeout(() => {
+      setAnimating(null);
+      setContentHeight(undefined);
+    }, COLLAPSE_DURATION_MS);
+    return () => clearTimeout(timer);
+  }, [animating]);
+
+  const isCollapsed = chunk.reviewed && animating !== 'expanding';
+  const showContent = !isCollapsed || animating === 'collapsing';
 
   return (
-    <div>
+    <div className={chunk.reviewed && animating === null ? 'opacity-60' : ''}>
       <ChunkHeader chunk={chunk} onToggle={onToggleReviewed} isLast={isLast} />
-      {chunk.metadata?.reviewNote && <ReviewNote note={chunk.metadata.reviewNote} />}
-      <div className="font-mono">
-        {parsedLines.map((parsed, i) => (
-          <DiffLine key={`${chunk.id}-${i}`} parsed={parsed} />
-        ))}
-      </div>
-      <InlineComment
-        comments={chunk.comments}
-        onAdd={onAddComment}
-        onUpdate={onUpdateComment}
-        onDelete={onDeleteComment}
-        onPublish={onPublishComment}
-      />
+      {showContent && (
+        <div
+          ref={contentRef}
+          className="overflow-hidden"
+          style={{
+            height: contentHeight !== undefined ? `${contentHeight}px` : 'auto',
+            transition:
+              animating !== null
+                ? `height ${COLLAPSE_DURATION_MS}ms ease-in-out, opacity ${COLLAPSE_DURATION_MS}ms ease-in-out`
+                : undefined,
+            opacity: animating === 'collapsing' ? 0 : 1,
+          }}
+        >
+          {chunk.metadata?.reviewNote && <ReviewNote note={chunk.metadata.reviewNote} />}
+          <div className="font-mono">
+            {parsedLines.map((parsed, i) => (
+              <DiffLine key={`${chunk.id}-${i}`} parsed={parsed} />
+            ))}
+          </div>
+          <InlineComment
+            comments={chunk.comments}
+            onAdd={onAddComment}
+            onUpdate={onUpdateComment}
+            onDelete={onDeleteComment}
+            onPublish={onPublishComment}
+          />
+        </div>
+      )}
     </div>
   );
 }

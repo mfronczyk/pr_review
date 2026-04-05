@@ -26,10 +26,12 @@ export default {
         },
         'diff-add': {
           bg: 'rgb(var(--color-diff-add-bg) / <alpha-value>)',
+          gutter: 'rgb(var(--color-diff-add-gutter) / <alpha-value>)',
           fg: 'rgb(var(--color-diff-add-fg) / <alpha-value>)',
         },
         'diff-del': {
           bg: 'rgb(var(--color-diff-del-bg) / <alpha-value>)',
+          gutter: 'rgb(var(--color-diff-del-gutter) / <alpha-value>)',
           fg: 'rgb(var(--color-diff-del-fg) / <alpha-value>)',
         },
         'diff-info': {
