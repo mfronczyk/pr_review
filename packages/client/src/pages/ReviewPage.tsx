@@ -494,6 +494,7 @@ export function ReviewPage(): React.ReactElement {
   const [syncing, setSyncing] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [departingChunkIds, setDepartingChunkIds] = useState<Set<number>>(new Set());
 
   const {
     data: pr,
@@ -591,10 +592,19 @@ export function ReviewPage(): React.ReactElement {
       }
     }
     if (hideApproved) {
-      result = result.filter((c) => !c.approved);
+      result = result.filter((c) => !c.approved || departingChunkIds.has(c.id));
     }
     return result;
-  }, [chunks, activeFilter, hideApproved]);
+  }, [chunks, activeFilter, hideApproved, departingChunkIds]);
+
+  /** Called after a chunk's exit animation completes — remove it from the departing set. */
+  const handleChunkDeparted = useCallback((chunkId: number): void => {
+    setDepartingChunkIds((prev) => {
+      const next = new Set(prev);
+      next.delete(chunkId);
+      return next;
+    });
+  }, []);
 
   async function handleSync(): Promise<void> {
     setSyncing(true);
@@ -616,17 +626,26 @@ export function ReviewPage(): React.ReactElement {
 
   const handleToggleApproved = useCallback(
     async (chunkId: number): Promise<void> => {
+      // Check if this chunk is currently unapproved (will become approved)
+      const isApproving = chunks?.find((c) => c.id === chunkId)?.approved === false;
+
       // Optimistically toggle the approved state locally
       setChunks((prev) => {
         if (!prev) return prev;
         return prev.map((c) => (c.id === chunkId ? { ...c, approved: !c.approved } : c));
       });
+
+      // If approving with hideApproved on, animate the chunk out
+      if (isApproving && hideApproved) {
+        setDepartingChunkIds((prev) => new Set(prev).add(chunkId));
+      }
+
       await withErrorHandling(async () => {
         await api.toggleApproved(chunkId);
         // No reloadPr() — progress is derived from local chunks state
       });
     },
-    [withErrorHandling],
+    [chunks, hideApproved, withErrorHandling],
   );
 
   const handleBulkApprove = useCallback(
@@ -806,7 +825,15 @@ export function ReviewPage(): React.ReactElement {
 
   const handleDismissError = useCallback(() => setActionError(null), []);
 
-  const handleToggleHideApproved = useCallback(() => setHideApproved((h) => !h), []);
+  const handleToggleHideApproved = useCallback(() => {
+    setHideApproved((prev) => {
+      if (prev) {
+        // Toggling off — clear any stale departing state
+        setDepartingChunkIds(new Set());
+      }
+      return !prev;
+    });
+  }, []);
 
   const loading = prLoading || chunksLoading;
   const error = prError || chunksError;
@@ -865,7 +892,9 @@ export function ReviewPage(): React.ReactElement {
           ) : (
             <DiffViewer
               chunks={filteredChunks}
+              departingChunkIds={departingChunkIds}
               onToggleApproved={handleToggleApproved}
+              onChunkDeparted={handleChunkDeparted}
               onAddComment={handleAddComment}
               onReplyComment={handleReplyComment}
               onUpdateComment={handleUpdateComment}

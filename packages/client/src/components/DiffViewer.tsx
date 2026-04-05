@@ -8,7 +8,7 @@
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { InlineThread, NewCommentForm } from '@/components/InlineComment';
 import type { ChunkWithDetails, Comment, CommentThread } from '@pr-review/shared';
@@ -17,7 +17,9 @@ import type { ChunkWithDetails, Comment, CommentThread } from '@pr-review/shared
 
 interface DiffViewerProps {
   chunks: ChunkWithDetails[];
+  departingChunkIds: ReadonlySet<number>;
   onToggleApproved: (chunkId: number) => void;
+  onChunkDeparted: (chunkId: number) => void;
   onAddComment: (chunkId: number, body: string, line: number) => Promise<void>;
   onReplyComment: (chunkId: number, parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
@@ -394,11 +396,95 @@ function ChunkBlock({
   );
 }
 
+// ── Animated Chunk Wrapper ──────────────────────────────────
+
+const DEPART_DURATION_MS = 300;
+
+/**
+ * Wraps a chunk in a container that animates fade+collapse when departing.
+ * After the transition completes, calls onDeparted so the chunk can be
+ * removed from the list.
+ */
+function AnimatedChunkWrapper({
+  chunkId,
+  isDeparting,
+  onDeparted,
+  children,
+  className,
+}: {
+  chunkId: number;
+  isDeparting: boolean;
+  onDeparted: (chunkId: number) => void;
+  children: React.ReactNode;
+  className?: string;
+}): React.ReactElement {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [animating, setAnimating] = useState(false);
+
+  // Reset inline styles if departing is cancelled (e.g. hideApproved toggled off)
+  useEffect(() => {
+    if (!isDeparting && animating) {
+      const el = wrapperRef.current;
+      if (el) {
+        el.style.transition = '';
+        el.style.opacity = '';
+        el.style.height = '';
+        el.style.marginTop = '';
+        el.style.overflow = '';
+      }
+      setAnimating(false);
+    }
+  }, [isDeparting, animating]);
+
+  useEffect(() => {
+    if (!isDeparting || animating) return;
+
+    const el = wrapperRef.current;
+    if (!el) {
+      onDeparted(chunkId);
+      return;
+    }
+
+    // Capture current height then trigger collapse
+    const height = el.scrollHeight;
+    el.style.height = `${height}px`;
+    el.style.opacity = '1';
+
+    // Force reflow so the browser registers the starting values
+    el.offsetHeight; // eslint-disable-line no-unused-expressions
+
+    setAnimating(true);
+
+    // Start the transition
+    requestAnimationFrame(() => {
+      el.style.transition = `opacity ${DEPART_DURATION_MS}ms ease, height ${DEPART_DURATION_MS}ms ease, margin ${DEPART_DURATION_MS}ms ease`;
+      el.style.opacity = '0';
+      el.style.height = '0px';
+      el.style.marginTop = '0px';
+      el.style.overflow = 'hidden';
+    });
+
+    const timer = setTimeout(() => {
+      onDeparted(chunkId);
+    }, DEPART_DURATION_MS + 50);
+
+    return () => clearTimeout(timer);
+  }, [isDeparting, chunkId, onDeparted, animating]);
+
+  return (
+    <div ref={wrapperRef} className={className}>
+      {children}
+    </div>
+  );
+}
+
 // ── File Box ────────────────────────────────────────────────
 
 function FileBox({
   group,
+  departingChunkIds,
   onToggleApproved,
+  onChunkDeparted,
   onAddComment,
   onReplyComment,
   onUpdateComment,
@@ -408,7 +494,9 @@ function FileBox({
   onUnresolveThread,
 }: {
   group: FileGroup;
+  departingChunkIds: ReadonlySet<number>;
   onToggleApproved: (chunkId: number) => void;
+  onChunkDeparted: (chunkId: number) => void;
   onAddComment: (chunkId: number, body: string, line: number) => Promise<void>;
   onReplyComment: (chunkId: number, parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
@@ -430,7 +518,13 @@ function FileBox({
 
       {/* Chunks */}
       {group.chunks.map((chunk, i) => (
-        <div key={chunk.id} className={i > 0 ? 'mt-3' : ''}>
+        <AnimatedChunkWrapper
+          key={chunk.id}
+          chunkId={chunk.id}
+          isDeparting={departingChunkIds.has(chunk.id)}
+          onDeparted={onChunkDeparted}
+          className={i > 0 ? 'mt-3' : ''}
+        >
           <ChunkBlock
             chunk={chunk}
             onToggleApproved={() => onToggleApproved(chunk.id)}
@@ -443,7 +537,7 @@ function FileBox({
             onUnresolveThread={onUnresolveThread}
             isLast={i === group.chunks.length - 1}
           />
-        </div>
+        </AnimatedChunkWrapper>
       ))}
     </div>
   );
@@ -453,7 +547,9 @@ function FileBox({
 
 export const DiffViewer = memo(function DiffViewer({
   chunks,
+  departingChunkIds,
   onToggleApproved,
+  onChunkDeparted,
   onAddComment,
   onReplyComment,
   onUpdateComment,
@@ -536,7 +632,9 @@ export const DiffViewer = memo(function DiffViewer({
           >
             <FileBox
               group={fileGroups[virtualRow.index]}
+              departingChunkIds={departingChunkIds}
               onToggleApproved={onToggleApproved}
+              onChunkDeparted={onChunkDeparted}
               onAddComment={onAddComment}
               onReplyComment={onReplyComment}
               onUpdateComment={onUpdateComment}
