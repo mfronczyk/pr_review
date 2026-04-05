@@ -326,11 +326,19 @@ function ChunkBlock({
     return 0;
   }
 
+  const dimClass = chunk.approved ? 'opacity-50' : '';
+
   return (
-    <div style={{ opacity: chunk.approved ? 0.5 : 1 }}>
-      <ChunkHeader chunk={chunk} onToggle={onToggleApproved} isLast={isLast} />
+    <div>
+      <div className={dimClass}>
+        <ChunkHeader chunk={chunk} onToggle={onToggleApproved} isLast={isLast} />
+      </div>
       <div className="overflow-hidden">
-        {chunk.metadata?.reviewNote && <ReviewNote note={chunk.metadata.reviewNote} />}
+        {chunk.metadata?.reviewNote && (
+          <div className={dimClass}>
+            <ReviewNote note={chunk.metadata.reviewNote} />
+          </div>
+        )}
         <div className="font-mono">
           {parsedLines.map((parsed, i) => {
             const lineNum = getCommentLine(parsed);
@@ -339,15 +347,17 @@ function ChunkBlock({
 
             return (
               <div key={`${chunk.id}-line-${i}`}>
-                <DiffLine
-                  parsed={parsed}
-                  onClickAdd={
-                    parsed.type !== 'hunk-header' && parsed.type !== 'empty'
-                      ? () => setCommentFormIndex(i)
-                      : undefined
-                  }
-                />
-                {/* Render threads anchored to this line */}
+                <div className={dimClass}>
+                  <DiffLine
+                    parsed={parsed}
+                    onClickAdd={
+                      parsed.type !== 'hunk-header' && parsed.type !== 'empty'
+                        ? () => setCommentFormIndex(i)
+                        : undefined
+                    }
+                  />
+                </div>
+                {/* Render threads anchored to this line — always full opacity */}
                 {threadsForLine?.map((thread) => (
                   <InlineThread
                     key={thread.root.id}
@@ -360,7 +370,7 @@ function ChunkBlock({
                     onUnresolve={onUnresolveThread}
                   />
                 ))}
-                {/* New comment form for this line */}
+                {/* New comment form for this line — always full opacity */}
                 {showForm && (
                   <NewCommentForm
                     onAdd={async (body) => {
@@ -374,6 +384,11 @@ function ChunkBlock({
             );
           })}
         </div>
+      </div>
+
+      {/* Footer — mirrors ChunkHeader, dimmed when approved */}
+      <div className={dimClass}>
+        <ChunkHeader chunk={chunk} onToggle={onToggleApproved} isLast={isLast} />
       </div>
     </div>
   );
@@ -415,19 +430,20 @@ function FileBox({
 
       {/* Chunks */}
       {group.chunks.map((chunk, i) => (
-        <ChunkBlock
-          key={chunk.id}
-          chunk={chunk}
-          onToggleApproved={() => onToggleApproved(chunk.id)}
-          onAddComment={(body, line) => onAddComment(chunk.id, body, line)}
-          onReplyComment={(parentId, body) => onReplyComment(chunk.id, parentId, body)}
-          onUpdateComment={onUpdateComment}
-          onDeleteComment={onDeleteComment}
-          onPublishComment={onPublishComment}
-          onResolveThread={onResolveThread}
-          onUnresolveThread={onUnresolveThread}
-          isLast={i === group.chunks.length - 1}
-        />
+        <div key={chunk.id} className={i > 0 ? 'mt-3' : ''}>
+          <ChunkBlock
+            chunk={chunk}
+            onToggleApproved={() => onToggleApproved(chunk.id)}
+            onAddComment={(body, line) => onAddComment(chunk.id, body, line)}
+            onReplyComment={(parentId, body) => onReplyComment(chunk.id, parentId, body)}
+            onUpdateComment={onUpdateComment}
+            onDeleteComment={onDeleteComment}
+            onPublishComment={onPublishComment}
+            onResolveThread={onResolveThread}
+            onUnresolveThread={onUnresolveThread}
+            isLast={i === group.chunks.length - 1}
+          />
+        </div>
       ))}
     </div>
   );
