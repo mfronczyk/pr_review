@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import express from 'express';
@@ -41,8 +43,65 @@ export function createApp(db: Database.Database, repoPath: string): express.Expr
   return app;
 }
 
+/**
+ * Validate that the given path is a git repository with an 'origin' remote.
+ * Returns the remote URL on success, or calls process.exit(1) on failure.
+ */
+function validateRepoPath(repoPath: string): string {
+  // 1. Check path exists and is a directory
+  try {
+    const stat = fs.statSync(repoPath);
+    if (!stat.isDirectory()) {
+      console.error('\nError: REPO_PATH is not a directory.\n');
+      console.error(`  REPO_PATH: ${repoPath}\n`);
+      console.error('Set REPO_PATH to a cloned git repository:');
+      console.error('  REPO_PATH=/path/to/repo npm run dev\n');
+      process.exit(1);
+    }
+  } catch {
+    console.error('\nError: REPO_PATH does not exist.\n');
+    console.error(`  REPO_PATH: ${repoPath}\n`);
+    console.error('Set REPO_PATH to a cloned git repository:');
+    console.error('  REPO_PATH=/path/to/repo npm run dev\n');
+    process.exit(1);
+  }
+
+  // 2. Check it's a git repository
+  try {
+    execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
+      cwd: repoPath,
+      stdio: 'pipe',
+    });
+  } catch {
+    console.error('\nError: REPO_PATH is not a git repository.\n');
+    console.error(`  REPO_PATH: ${repoPath}\n`);
+    console.error('Clone the repository first, then point REPO_PATH to it:');
+    console.error('  git clone <repo-url> /path/to/repo');
+    console.error('  REPO_PATH=/path/to/repo npm run dev\n');
+    process.exit(1);
+  }
+
+  // 3. Check it has an 'origin' remote
+  try {
+    const remoteUrl = execFileSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: repoPath,
+      stdio: 'pipe',
+      encoding: 'utf-8',
+    }).trim();
+    return remoteUrl;
+  } catch {
+    console.error("\nError: Git repository has no 'origin' remote.\n");
+    console.error(`  REPO_PATH: ${repoPath}\n`);
+    console.error('Add an origin remote:');
+    console.error(`  cd ${repoPath}`);
+    console.error('  git remote add origin <repo-url>\n');
+    process.exit(1);
+  }
+}
+
 // Initialize and start server when run directly
 if (process.env.NODE_ENV !== 'test') {
+  const remoteUrl = validateRepoPath(REPO_PATH);
   const dbPath = path.join(REPO_PATH, '.pr-review', 'data.db');
   const db: Database.Database = initDatabase(dbPath);
   const app = createApp(db, REPO_PATH);
@@ -50,6 +109,7 @@ if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
     console.log(`PR Review server running at http://localhost:${PORT}`);
     console.log(`Repo path: ${REPO_PATH}`);
+    console.log(`Remote:    ${remoteUrl}`);
     console.log(`Database:  ${dbPath}`);
   });
 }
