@@ -3,7 +3,7 @@
  * Shows file diffs with tag-based grouping sidebar and chunk review controls.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import * as api from '@/api';
@@ -494,11 +494,21 @@ export function ReviewPage(): React.ReactElement {
   } = useAsync(() => api.getPr(prId), [prId]);
 
   const {
-    data: chunks,
+    data: fetchedChunks,
     loading: chunksLoading,
     error: chunksError,
     reload: reloadChunks,
   } = useAsync(() => api.getChunks(prId), [prId]);
+
+  // Local chunks state — updated optimistically without refetching
+  const [chunks, setChunks] = useState<ChunkWithDetails[] | null>(null);
+
+  // Sync local state when fresh data arrives from API
+  useEffect(() => {
+    if (fetchedChunks) {
+      setChunks(fetchedChunks);
+    }
+  }, [fetchedChunks]);
 
   const { data: tags } = useAsync(() => api.getTags(), []);
 
@@ -578,51 +588,86 @@ export function ReviewPage(): React.ReactElement {
   }
 
   async function handleToggleReviewed(chunkId: number): Promise<void> {
+    // Optimistically toggle the reviewed state locally
+    setChunks((prev) => {
+      if (!prev) return prev;
+      return prev.map((c) => (c.id === chunkId ? { ...c, reviewed: !c.reviewed } : c));
+    });
     await withErrorHandling(async () => {
       await api.toggleReviewed(chunkId);
-      reload();
+      // Only refresh the PR progress bar, not the full chunks list
+      reloadPr();
     });
   }
 
   async function handleBulkApprove(tagId: number): Promise<void> {
+    // Optimistically mark all chunks with this tag as reviewed
+    setChunks((prev) => {
+      if (!prev) return prev;
+      return prev.map((c) => (c.tags.some((t) => t.id === tagId) ? { ...c, reviewed: true } : c));
+    });
     await withErrorHandling(async () => {
       await api.bulkApprove(prId, tagId);
-      reload();
+      reloadPr();
     });
   }
 
   async function handleAddComment(chunkId: number, body: string): Promise<void> {
     await withErrorHandling(async () => {
-      await api.createComment({ chunkId, prId, body });
-      reloadChunks();
+      const comment = await api.createComment({ chunkId, prId, body });
+      // Optimistically add the comment to local state
+      setChunks((prev) => {
+        if (!prev) return prev;
+        return prev.map((c) =>
+          c.id === chunkId ? { ...c, comments: [...c.comments, comment] } : c,
+        );
+      });
     });
   }
 
   async function handleUpdateComment(commentId: number, body: string): Promise<void> {
     await withErrorHandling(async () => {
-      await api.updateComment(commentId, body);
-      reloadChunks();
+      const updated = await api.updateComment(commentId, body);
+      setChunks((prev) => {
+        if (!prev) return prev;
+        return prev.map((c) => ({
+          ...c,
+          comments: c.comments.map((cm) => (cm.id === commentId ? updated : cm)),
+        }));
+      });
     });
   }
 
   async function handleDeleteComment(commentId: number): Promise<void> {
     await withErrorHandling(async () => {
       await api.deleteComment(commentId);
-      reloadChunks();
+      setChunks((prev) => {
+        if (!prev) return prev;
+        return prev.map((c) => ({
+          ...c,
+          comments: c.comments.filter((cm) => cm.id !== commentId),
+        }));
+      });
     });
   }
 
   async function handlePublishComment(commentId: number): Promise<void> {
     if (!pr) return;
     await withErrorHandling(async () => {
-      await api.publishComment(commentId, {
+      const published = await api.publishComment(commentId, {
         owner: pr.owner,
         repo: pr.repo,
         prNumber: pr.number,
         ghHost: pr.ghHost !== 'github.com' ? pr.ghHost : undefined,
         commitSha: pr.headSha,
       });
-      reloadChunks();
+      setChunks((prev) => {
+        if (!prev) return prev;
+        return prev.map((c) => ({
+          ...c,
+          comments: c.comments.map((cm) => (cm.id === commentId ? published : cm)),
+        }));
+      });
     });
   }
 
