@@ -18,8 +18,10 @@ import type { ChunkWithDetails, Comment, CommentThread } from '@pr-review/shared
 interface DiffViewerProps {
   chunks: ChunkWithDetails[];
   departingChunkIds: ReadonlySet<number>;
+  scrollToFile: string | null;
   onToggleApproved: (chunkId: number) => void;
   onChunkDeparted: (chunkId: number) => void;
+  onScrollToFileDone: () => void;
   onAddComment: (chunkId: number, body: string, line: number) => Promise<void>;
   onReplyComment: (chunkId: number, parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
@@ -548,8 +550,10 @@ function FileBox({
 export const DiffViewer = memo(function DiffViewer({
   chunks,
   departingChunkIds,
+  scrollToFile,
   onToggleApproved,
   onChunkDeparted,
+  onScrollToFileDone,
   onAddComment,
   onReplyComment,
   onUpdateComment,
@@ -606,6 +610,16 @@ export const DiffViewer = memo(function DiffViewer({
     estimateSize,
     overscan: 3,
   });
+
+  // Scroll to a specific file group when requested
+  useEffect(() => {
+    if (!scrollToFile) return;
+    const index = fileGroups.findIndex((g) => g.filePath === scrollToFile);
+    if (index >= 0) {
+      virtualizer.scrollToIndex(index, { align: 'start' });
+    }
+    onScrollToFileDone();
+  }, [scrollToFile, fileGroups, virtualizer, onScrollToFileDone]);
 
   return (
     <div ref={parentRef} className="h-full overflow-y-auto bg-surface-page p-4">

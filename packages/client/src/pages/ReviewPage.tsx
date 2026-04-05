@@ -157,26 +157,26 @@ function collapseTree(node: TreeNode): TreeNode {
 function FileTreeNode({
   node,
   depth,
-  activeFilter,
-  onFilterByFile,
+  activeFile,
+  onScrollToFile,
   collapsedDirs,
   onToggleDir,
 }: {
   node: TreeNode;
   depth: number;
-  activeFilter: { type: 'tag' | 'file'; value: string } | null;
-  onFilterByFile: (filePath: string) => void;
+  activeFile: string | null;
+  onScrollToFile: (filePath: string) => void;
   collapsedDirs: Set<string>;
   onToggleDir: (dirPath: string) => void;
 }): React.ReactElement {
-  const isActive = activeFilter?.type === 'file' && activeFilter.value === node.fullPath;
+  const isActive = activeFile === node.fullPath;
   const isCollapsed = collapsedDirs.has(node.fullPath);
 
   if (node.isFile) {
     return (
       <button
         type="button"
-        onClick={() => onFilterByFile(node.fullPath)}
+        onClick={() => onScrollToFile(node.fullPath)}
         className={`flex w-full items-center gap-1 rounded py-0.5 pr-1 text-left text-xs hover:bg-surface-active ${
           isActive ? 'bg-surface-active text-fg-primary' : 'text-fg-secondary'
         }`}
@@ -212,8 +212,8 @@ function FileTreeNode({
             key={child.fullPath}
             node={child}
             depth={depth + 1}
-            activeFilter={activeFilter}
-            onFilterByFile={onFilterByFile}
+            activeFile={activeFile}
+            onScrollToFile={onScrollToFile}
             collapsedDirs={collapsedDirs}
             onToggleDir={onToggleDir}
           />
@@ -229,17 +229,19 @@ const Sidebar = memo(function Sidebar({
   groups,
   files,
   activeFilter,
+  activeFile,
   onFilterByTag,
-  onFilterByFile,
+  onScrollToFile,
   onClearFilter,
   onBulkApprove,
 }: {
   pr: PrWithProgress;
   groups: GroupInfo[];
   files: string[];
-  activeFilter: { type: 'tag' | 'file'; value: string } | null;
+  activeFilter: { type: 'tag'; value: string } | null;
+  activeFile: string | null;
   onFilterByTag: (tagName: string) => void;
-  onFilterByFile: (filePath: string) => void;
+  onScrollToFile: (filePath: string) => void;
   onClearFilter: () => void;
   onBulkApprove: (tagId: number) => void;
 }): React.ReactElement {
@@ -390,8 +392,8 @@ const Sidebar = memo(function Sidebar({
                 key={child.fullPath}
                 node={child}
                 depth={0}
-                activeFilter={activeFilter}
-                onFilterByFile={onFilterByFile}
+                activeFile={activeFile}
+                onScrollToFile={onScrollToFile}
                 collapsedDirs={collapsedDirs}
                 onToggleDir={handleToggleDir}
               />
@@ -487,9 +489,11 @@ export function ReviewPage(): React.ReactElement {
   const prId = Number(id);
 
   const [activeFilter, setActiveFilter] = useState<{
-    type: 'tag' | 'file';
+    type: 'tag';
     value: string;
   } | null>(null);
+  const [scrollToFile, setScrollToFile] = useState<string | null>(null);
+  const [activeFile, setActiveFile] = useState<string | null>(null);
   const [hideApproved, setHideApproved] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -559,7 +563,7 @@ export function ReviewPage(): React.ReactElement {
   const files = useMemo((): string[] => {
     if (!chunks) return [];
     let source = chunks;
-    if (activeFilter?.type === 'tag') {
+    if (activeFilter) {
       source = chunks.filter((c) => c.tags.some((t) => t.name === activeFilter.value));
     }
     const seen = new Set<string>();
@@ -580,16 +584,12 @@ export function ReviewPage(): React.ReactElement {
     return { ...pr, totalChunks, approvedChunks };
   }, [pr, chunks]);
 
-  // Filter chunks based on active filter and hide-approved toggle
+  // Filter chunks based on active tag filter and hide-approved toggle
   const filteredChunks = useMemo((): ChunkWithDetails[] => {
     if (!chunks) return [];
     let result = chunks;
     if (activeFilter) {
-      if (activeFilter.type === 'tag') {
-        result = result.filter((c) => c.tags.some((t) => t.name === activeFilter.value));
-      } else {
-        result = result.filter((c) => c.filePath === activeFilter.value);
-      }
+      result = result.filter((c) => c.tags.some((t) => t.name === activeFilter.value));
     }
     if (hideApproved) {
       result = result.filter((c) => !c.approved || departingChunkIds.has(c.id));
@@ -813,15 +813,19 @@ export function ReviewPage(): React.ReactElement {
     [],
   );
 
-  const handleFilterByFile = useCallback(
-    (path: string) =>
-      setActiveFilter((f) =>
-        f?.type === 'file' && f.value === path ? null : { type: 'file', value: path },
-      ),
-    [],
-  );
+  const handleScrollToFile = useCallback((path: string) => {
+    setActiveFile((prev) => (prev === path ? null : path));
+    setScrollToFile(path);
+  }, []);
 
-  const handleClearFilter = useCallback(() => setActiveFilter(null), []);
+  const handleScrollToFileDone = useCallback(() => {
+    setScrollToFile(null);
+  }, []);
+
+  const handleClearFilter = useCallback(() => {
+    setActiveFilter(null);
+    setActiveFile(null);
+  }, []);
 
   const handleDismissError = useCallback(() => setActionError(null), []);
 
@@ -862,8 +866,9 @@ export function ReviewPage(): React.ReactElement {
         groups={groups}
         files={files}
         activeFilter={activeFilter}
+        activeFile={activeFile}
         onFilterByTag={handleFilterByTag}
-        onFilterByFile={handleFilterByFile}
+        onScrollToFile={handleScrollToFile}
         onClearFilter={handleClearFilter}
         onBulkApprove={handleBulkApprove}
       />
@@ -893,8 +898,10 @@ export function ReviewPage(): React.ReactElement {
             <DiffViewer
               chunks={filteredChunks}
               departingChunkIds={departingChunkIds}
+              scrollToFile={scrollToFile}
               onToggleApproved={handleToggleApproved}
               onChunkDeparted={handleChunkDeparted}
+              onScrollToFileDone={handleScrollToFileDone}
               onAddComment={handleAddComment}
               onReplyComment={handleReplyComment}
               onUpdateComment={handleUpdateComment}
