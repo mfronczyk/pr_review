@@ -8,7 +8,7 @@
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 
 import { InlineThread, NewCommentForm } from '@/components/InlineComment';
 import type { ChunkWithDetails, Comment, CommentThread } from '@pr-review/shared';
@@ -280,8 +280,6 @@ function DiffLine({
 
 // ── Chunk Block ─────────────────────────────────────────────
 
-const COLLAPSE_DURATION_MS = 300;
-
 function ChunkBlock({
   chunk,
   onToggleApproved,
@@ -306,7 +304,6 @@ function ChunkBlock({
   isLast: boolean;
 }): React.ReactElement {
   const parsedLines = useMemo(() => parseDiffLines(chunk.diffText), [chunk.diffText]);
-  const contentRef = useRef<HTMLDivElement>(null);
   // Track which diff line index the comment form is open for (null = closed).
   // We use the array index (not line number) because multiple diff lines can
   // share the same line number (e.g. a deletion followed by an addition).
@@ -314,73 +311,6 @@ function ChunkBlock({
 
   // Group comments into threads by line
   const threadsByLine = useMemo(() => groupCommentsIntoThreads(chunk.comments), [chunk.comments]);
-
-  // Animation: always render content, animate height via ref manipulation
-  const [collapsed, setCollapsed] = useState(chunk.approved);
-  const isFirstRender = useRef(true);
-
-  useEffect(() => {
-    // Skip animation on initial mount
-    if (isFirstRender.current) {
-      isFirstRender.current = false;
-      return;
-    }
-
-    if (!chunk.approved) {
-      // Expanding: set collapsed=false so the content div renders,
-      // then the second useEffect handles the expand animation.
-      setCollapsed(false);
-      return;
-    }
-
-    // Collapsing: animate height to 0, then set collapsed=true
-    const el = contentRef.current;
-    if (!el) return;
-
-    const height = el.scrollHeight;
-    el.style.height = `${height}px`;
-    el.style.transition = 'none';
-    // Force reflow
-    void el.offsetHeight;
-    el.style.transition = `height ${COLLAPSE_DURATION_MS}ms ease-in-out, opacity ${COLLAPSE_DURATION_MS}ms ease-in-out`;
-    el.style.height = '0px';
-    el.style.opacity = '0';
-
-    const timer = setTimeout(() => {
-      setCollapsed(true);
-      el.style.transition = '';
-      el.style.height = '';
-      el.style.opacity = '';
-    }, COLLAPSE_DURATION_MS);
-    return () => clearTimeout(timer);
-  }, [chunk.approved]);
-
-  // Handle expand animation after collapsed becomes false
-  useEffect(() => {
-    if (chunk.approved || collapsed) return;
-    const el = contentRef.current;
-    if (!el) return;
-
-    // Start at 0 height
-    el.style.height = '0px';
-    el.style.opacity = '0';
-    el.style.overflow = 'hidden';
-    el.style.transition = 'none';
-    void el.offsetHeight;
-
-    const targetHeight = el.scrollHeight;
-    el.style.transition = `height ${COLLAPSE_DURATION_MS}ms ease-in-out, opacity ${COLLAPSE_DURATION_MS}ms ease-in-out`;
-    el.style.height = `${targetHeight}px`;
-    el.style.opacity = '1';
-
-    const timer = setTimeout(() => {
-      el.style.transition = '';
-      el.style.height = '';
-      el.style.opacity = '';
-      el.style.overflow = '';
-    }, COLLAPSE_DURATION_MS);
-    return () => clearTimeout(timer);
-  }, [collapsed, chunk.approved]);
 
   /**
    * Determine the effective line number for a diff line.
@@ -397,59 +327,54 @@ function ChunkBlock({
   }
 
   return (
-    <div
-      className="transition-opacity duration-300"
-      style={{ opacity: chunk.approved && collapsed ? 0.6 : 1 }}
-    >
+    <div style={{ opacity: chunk.approved ? 0.5 : 1 }}>
       <ChunkHeader chunk={chunk} onToggle={onToggleApproved} isLast={isLast} />
-      {!collapsed && (
-        <div ref={contentRef} className="overflow-hidden">
-          {chunk.metadata?.reviewNote && <ReviewNote note={chunk.metadata.reviewNote} />}
-          <div className="font-mono">
-            {parsedLines.map((parsed, i) => {
-              const lineNum = getCommentLine(parsed);
-              const threadsForLine = threadsByLine.get(lineNum);
-              const showForm = commentFormIndex === i;
+      <div className="overflow-hidden">
+        {chunk.metadata?.reviewNote && <ReviewNote note={chunk.metadata.reviewNote} />}
+        <div className="font-mono">
+          {parsedLines.map((parsed, i) => {
+            const lineNum = getCommentLine(parsed);
+            const threadsForLine = threadsByLine.get(lineNum);
+            const showForm = commentFormIndex === i;
 
-              return (
-                <div key={`${chunk.id}-line-${i}`}>
-                  <DiffLine
-                    parsed={parsed}
-                    onClickAdd={
-                      parsed.type !== 'hunk-header' && parsed.type !== 'empty'
-                        ? () => setCommentFormIndex(i)
-                        : undefined
-                    }
+            return (
+              <div key={`${chunk.id}-line-${i}`}>
+                <DiffLine
+                  parsed={parsed}
+                  onClickAdd={
+                    parsed.type !== 'hunk-header' && parsed.type !== 'empty'
+                      ? () => setCommentFormIndex(i)
+                      : undefined
+                  }
+                />
+                {/* Render threads anchored to this line */}
+                {threadsForLine?.map((thread) => (
+                  <InlineThread
+                    key={thread.root.id}
+                    thread={thread}
+                    onReply={onReplyComment}
+                    onUpdate={onUpdateComment}
+                    onDelete={onDeleteComment}
+                    onPublish={onPublishComment}
+                    onResolve={onResolveThread}
+                    onUnresolve={onUnresolveThread}
                   />
-                  {/* Render threads anchored to this line */}
-                  {threadsForLine?.map((thread) => (
-                    <InlineThread
-                      key={thread.root.id}
-                      thread={thread}
-                      onReply={onReplyComment}
-                      onUpdate={onUpdateComment}
-                      onDelete={onDeleteComment}
-                      onPublish={onPublishComment}
-                      onResolve={onResolveThread}
-                      onUnresolve={onUnresolveThread}
-                    />
-                  ))}
-                  {/* New comment form for this line */}
-                  {showForm && (
-                    <NewCommentForm
-                      onAdd={async (body) => {
-                        await onAddComment(body, lineNum);
-                        setCommentFormIndex(null);
-                      }}
-                      onCancel={() => setCommentFormIndex(null)}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                ))}
+                {/* New comment form for this line */}
+                {showForm && (
+                  <NewCommentForm
+                    onAdd={async (body) => {
+                      await onAddComment(body, lineNum);
+                      setCommentFormIndex(null);
+                    }}
+                    onCancel={() => setCommentFormIndex(null)}
+                  />
+                )}
+              </div>
+            );
+          })}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -547,20 +472,16 @@ export const DiffViewer = memo(function DiffViewer({
     return result;
   }, [chunks]);
 
-  // Estimate file box height: header ~36px + each chunk varies
+  // Estimate file box height: header ~36px + each chunk's full content
   const estimateSize = useCallback(
     (index: number): number => {
       const group = fileGroups[index];
       let height = 36; // file header
       for (const chunk of group.chunks) {
-        if (chunk.approved) {
-          height += 32; // collapsed chunk header
-        } else {
-          const lineCount = chunk.diffText.split('\n').length;
-          const noteHeight = chunk.metadata?.reviewNote ? 28 : 0;
-          // chunk header + note + diff lines + comment area
-          height += 32 + noteHeight + lineCount * 20 + 40;
-        }
+        const lineCount = chunk.diffText.split('\n').length;
+        const noteHeight = chunk.metadata?.reviewNote ? 28 : 0;
+        // chunk header + note + diff lines + comment area
+        height += 32 + noteHeight + lineCount * 20 + 40;
       }
       return height + 32; // bottom margin between file boxes
     },

@@ -93,63 +93,6 @@ describe('ChunkService', () => {
     });
   });
 
-  describe('bulkUnapproveByTag', () => {
-    it('should mark all approved chunks with a tag as unapproved', () => {
-      const chunks = service.getChunksForPr(prId);
-      const tags = service.getAllTags();
-      const refactorTag = tags.find((t) => t.name === 'refactor');
-      if (!refactorTag) throw new Error('refactor tag not found');
-
-      // Tag two chunks with 'refactor' and approve them
-      service.addTagsToChunk(chunks[0].id, [refactorTag.id]);
-      service.addTagsToChunk(chunks[1].id, [refactorTag.id]);
-      service.bulkApproveByTag(prId, refactorTag.id);
-
-      // Verify they are approved
-      const approved = service.getChunksForPr(prId);
-      expect(approved[0].approved).toBe(true);
-      expect(approved[1].approved).toBe(true);
-
-      // Now unapprove
-      const count = service.bulkUnapproveByTag(prId, refactorTag.id);
-      expect(count).toBe(2);
-
-      // Verify they are unapproved
-      const updated = service.getChunksForPr(prId);
-      expect(updated[0].approved).toBe(false);
-      expect(updated[1].approved).toBe(false);
-      expect(updated[0].approvedAt).toBeNull();
-      expect(updated[1].approvedAt).toBeNull();
-    });
-
-    it('should only unapprove chunks that are currently approved', () => {
-      const chunks = service.getChunksForPr(prId);
-      const tags = service.getAllTags();
-      const refactorTag = tags.find((t) => t.name === 'refactor');
-      if (!refactorTag) throw new Error('refactor tag not found');
-
-      // Tag two chunks but only approve one
-      service.addTagsToChunk(chunks[0].id, [refactorTag.id]);
-      service.addTagsToChunk(chunks[1].id, [refactorTag.id]);
-      service.markApproved(chunks[0].id);
-
-      const count = service.bulkUnapproveByTag(prId, refactorTag.id);
-      expect(count).toBe(1);
-    });
-
-    it('should return 0 when no chunks are approved', () => {
-      const chunks = service.getChunksForPr(prId);
-      const tags = service.getAllTags();
-      const refactorTag = tags.find((t) => t.name === 'refactor');
-      if (!refactorTag) throw new Error('refactor tag not found');
-
-      service.addTagsToChunk(chunks[0].id, [refactorTag.id]);
-
-      const count = service.bulkUnapproveByTag(prId, refactorTag.id);
-      expect(count).toBe(0);
-    });
-  });
-
   describe('tag operations', () => {
     it('should get all default tags', () => {
       const tags = service.getAllTags();

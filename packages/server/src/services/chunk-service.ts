@@ -96,22 +96,6 @@ export class ChunkService {
   }
 
   /**
-   * Bulk unapprove: mark all chunks with a given tag as unapproved.
-   */
-  bulkUnapproveByTag(prId: number, tagId: number): number {
-    const result = this.db
-      .prepare(
-        `UPDATE chunks SET approved = 0, approved_at = NULL
-       WHERE pr_id = ? AND id IN (
-         SELECT chunk_id FROM chunk_tags WHERE tag_id = ?
-       ) AND approved = 1`,
-      )
-      .run(prId, tagId);
-
-    return result.changes;
-  }
-
-  /**
    * Update chunk metadata (priority, review note).
    */
   updateMetadata(chunkId: number, priority?: Priority, reviewNote?: string | null): void {

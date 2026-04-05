@@ -109,24 +109,6 @@ export function createChunkRoutes(db: Database.Database): Router {
   });
 
   /**
-   * POST /api/prs/:prId/bulk-unapprove
-   * Bulk unapprove all chunks with a given tag.
-   */
-  router.post('/prs/:prId/bulk-unapprove', (req, res) => {
-    try {
-      const { tagId } = req.body as { tagId: number };
-      if (!tagId) {
-        res.status(400).json({ error: 'tagId is required' });
-        return;
-      }
-      const count = chunkService.bulkUnapproveByTag(Number(req.params.prId), tagId);
-      res.json({ unapproved: count });
-    } catch (error) {
-      res.status(500).json({ error: errorMessage(error) });
-    }
-  });
-
-  /**
    * GET /api/tags
    * Get all tags.
    */

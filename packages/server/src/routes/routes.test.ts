@@ -147,36 +147,6 @@ describe('Chunk routes', () => {
     expect(res.body).toHaveProperty('approved');
     expect(res.body.approved).toBeGreaterThanOrEqual(1);
   });
-
-  it('POST /api/prs/:prId/bulk-unapprove should unapprove chunks by tag', async () => {
-    const tagsRes = await request(app).get('/api/tags');
-    const refactorTag = tagsRes.body.find((t: { name: string }) => t.name === 'refactor');
-
-    // Ensure chunks are approved first
-    await request(app).post('/api/prs/1/bulk-approve').send({ tagId: refactorTag.id });
-
-    const res = await request(app)
-      .post('/api/prs/1/bulk-unapprove')
-      .send({ tagId: refactorTag.id });
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('unapproved');
-    expect(res.body.unapproved).toBeGreaterThanOrEqual(1);
-
-    // Verify chunks are unapproved
-    const chunksRes = await request(app).get('/api/prs/1/chunks');
-    const taggedChunks = chunksRes.body.filter((c: { tags: { id: number }[] }) =>
-      c.tags.some((t: { id: number }) => t.id === refactorTag.id),
-    );
-    for (const chunk of taggedChunks) {
-      expect(chunk.approved).toBe(false);
-    }
-  });
-
-  it('POST /api/prs/:prId/bulk-unapprove should require tagId', async () => {
-    const res = await request(app).post('/api/prs/1/bulk-unapprove').send({});
-    expect(res.status).toBe(400);
-    expect(res.body).toHaveProperty('error', 'tagId is required');
-  });
 });
 
 describe('Comment routes', () => {
