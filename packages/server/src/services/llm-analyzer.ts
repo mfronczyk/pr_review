@@ -154,7 +154,7 @@ export async function analyzePr(
     // Dynamic import to avoid hard dependency when SDK isn't available
     const { createOpencode } = await import('@opencode-ai/sdk/v2');
 
-    const { client, server } = await createOpencode();
+    const { client, server } = await createOpencode({ port: 0 });
 
     try {
       // Create a session for this analysis
