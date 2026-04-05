@@ -118,6 +118,8 @@ export function createComment(data: {
   chunkId: number;
   prId: number;
   body: string;
+  line: number;
+  parentId?: number;
 }): Promise<Comment> {
   return request('/api/comments', {
     method: 'POST',
@@ -154,4 +156,12 @@ export function publishAllComments(
     method: 'POST',
     body: JSON.stringify(data),
   });
+}
+
+export function resolveThread(id: number): Promise<Comment> {
+  return request(`/api/comments/${id}/resolve`, { method: 'POST' });
+}
+
+export function unresolveThread(id: number): Promise<Comment> {
+  return request(`/api/comments/${id}/unresolve`, { method: 'POST' });
 }

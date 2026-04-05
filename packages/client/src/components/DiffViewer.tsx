@@ -2,23 +2,29 @@
  * DiffViewer – renders diff chunks grouped by file in bordered boxes (like GitHub PRs).
  * Each file is a rounded container with a sticky header and all its chunks inside.
  * Uses @tanstack/react-virtual for efficient rendering of large PRs.
+ *
+ * Comments are anchored to specific new-file lines within chunks and rendered
+ * inline as threads (root + flat replies).
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { InlineComment } from '@/components/InlineComment';
-import type { ChunkWithDetails } from '@pr-review/shared';
+import { InlineThread, NewCommentForm } from '@/components/InlineComment';
+import type { ChunkWithDetails, Comment, CommentThread } from '@pr-review/shared';
 
 // ── Types ───────────────────────────────────────────────────
 
 interface DiffViewerProps {
   chunks: ChunkWithDetails[];
   onToggleReviewed: (chunkId: number) => void;
-  onAddComment: (chunkId: number, body: string) => Promise<void>;
+  onAddComment: (chunkId: number, body: string, line: number) => Promise<void>;
+  onReplyComment: (chunkId: number, parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
   onPublishComment: (commentId: number) => Promise<void>;
+  onResolveThread: (commentId: number) => Promise<void>;
+  onUnresolveThread: (commentId: number) => Promise<void>;
 }
 
 /** Each virtual row is one file group (header + all chunks). */
@@ -26,6 +32,40 @@ interface FileGroup {
   filePath: string;
   chunks: ChunkWithDetails[];
   allReviewed: boolean;
+}
+
+// ── Helpers ─────────────────────────────────────────────────
+
+/**
+ * Group a flat Comment[] into threads keyed by new-file line number.
+ * Returns a Map from line number to CommentThread[].
+ */
+function groupCommentsIntoThreads(comments: Comment[]): Map<number, CommentThread[]> {
+  const roots = comments.filter((c) => c.parentId == null);
+  const repliesByParent = new Map<number, Comment[]>();
+  for (const c of comments) {
+    if (c.parentId != null) {
+      const list = repliesByParent.get(c.parentId);
+      if (list) {
+        list.push(c);
+      } else {
+        repliesByParent.set(c.parentId, [c]);
+      }
+    }
+  }
+
+  const byLine = new Map<number, CommentThread[]>();
+  for (const root of roots) {
+    const replies = repliesByParent.get(root.id) ?? [];
+    const thread: CommentThread = { root, replies };
+    const existing = byLine.get(root.line);
+    if (existing) {
+      existing.push(thread);
+    } else {
+      byLine.set(root.line, [thread]);
+    }
+  }
+  return byLine;
 }
 
 // ── Tag Pill ────────────────────────────────────────────────
@@ -78,6 +118,7 @@ function ChunkHeader({
   onToggle: () => void;
   isLast: boolean;
 }): React.ReactElement {
+  const commentCount = chunk.comments.length;
   return (
     <div
       className={`flex items-center gap-2 border-t border-border-secondary bg-surface-secondary px-3 py-1.5 ${
@@ -107,9 +148,9 @@ function ChunkHeader({
 
       {chunk.metadata?.priority && <PriorityBadge priority={chunk.metadata.priority} />}
 
-      {chunk.comments.length > 0 && (
+      {commentCount > 0 && (
         <span className="text-xs text-fg-muted">
-          {chunk.comments.length} comment{chunk.comments.length !== 1 ? 's' : ''}
+          {commentCount} comment{commentCount !== 1 ? 's' : ''}
         </span>
       )}
 
@@ -245,22 +286,32 @@ function ChunkBlock({
   chunk,
   onToggleReviewed,
   onAddComment,
+  onReplyComment,
   onUpdateComment,
   onDeleteComment,
   onPublishComment,
+  onResolveThread,
+  onUnresolveThread,
   isLast,
 }: {
   chunk: ChunkWithDetails;
   onToggleReviewed: () => void;
-  onAddComment: (body: string) => Promise<void>;
+  onAddComment: (body: string, line: number) => Promise<void>;
+  onReplyComment: (parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
   onPublishComment: (commentId: number) => Promise<void>;
+  onResolveThread: (commentId: number) => Promise<void>;
+  onUnresolveThread: (commentId: number) => Promise<void>;
   isLast: boolean;
 }): React.ReactElement {
   const parsedLines = useMemo(() => parseDiffLines(chunk.diffText), [chunk.diffText]);
   const contentRef = useRef<HTMLDivElement>(null);
-  const [commentFormOpen, setCommentFormOpen] = useState(false);
+  // Track which line the comment form is open for (null = closed)
+  const [commentFormLine, setCommentFormLine] = useState<number | null>(null);
+
+  // Group comments into threads by line
+  const threadsByLine = useMemo(() => groupCommentsIntoThreads(chunk.comments), [chunk.comments]);
 
   // Animation: always render content, animate height via ref manipulation
   const [collapsed, setCollapsed] = useState(chunk.reviewed);
@@ -276,7 +327,6 @@ function ChunkBlock({
     if (!chunk.reviewed) {
       // Expanding: set collapsed=false so the content div renders,
       // then the second useEffect handles the expand animation.
-      // Must happen before the el check — contentRef is null while collapsed.
       setCollapsed(false);
       return;
     }
@@ -330,6 +380,20 @@ function ChunkBlock({
     return () => clearTimeout(timer);
   }, [collapsed, chunk.reviewed]);
 
+  /**
+   * Determine the effective line number for a diff line.
+   * For add/context lines, use newLineNum. For del lines, use the newLineNum
+   * of the next non-del line (or fallback to old line).
+   * This gives us a "right-side" anchor for comments.
+   */
+  function getCommentLine(parsed: ParsedDiffLine): number {
+    // For lines with a new-file line number, use it directly
+    if (parsed.newLineNum != null) return parsed.newLineNum;
+    // For deleted lines, use the old line number as fallback
+    if (parsed.oldLineNum != null) return parsed.oldLineNum;
+    return 0;
+  }
+
   return (
     <div
       className="transition-opacity duration-300"
@@ -340,28 +404,48 @@ function ChunkBlock({
         <div ref={contentRef} className="overflow-hidden">
           {chunk.metadata?.reviewNote && <ReviewNote note={chunk.metadata.reviewNote} />}
           <div className="font-mono">
-            {parsedLines.map((parsed, i) => (
-              <DiffLine
-                key={`${chunk.id}-${i}`}
-                parsed={parsed}
-                onClickAdd={() => setCommentFormOpen(true)}
-              />
-            ))}
+            {parsedLines.map((parsed, i) => {
+              const lineNum = getCommentLine(parsed);
+              const threadsForLine = threadsByLine.get(lineNum);
+              const showForm = commentFormLine != null && commentFormLine === lineNum;
+
+              return (
+                <div key={`${chunk.id}-line-${i}`}>
+                  <DiffLine
+                    parsed={parsed}
+                    onClickAdd={
+                      parsed.type !== 'hunk-header' && parsed.type !== 'empty'
+                        ? () => setCommentFormLine(lineNum)
+                        : undefined
+                    }
+                  />
+                  {/* Render threads anchored to this line */}
+                  {threadsForLine?.map((thread) => (
+                    <InlineThread
+                      key={thread.root.id}
+                      thread={thread}
+                      onReply={onReplyComment}
+                      onUpdate={onUpdateComment}
+                      onDelete={onDeleteComment}
+                      onPublish={onPublishComment}
+                      onResolve={onResolveThread}
+                      onUnresolve={onUnresolveThread}
+                    />
+                  ))}
+                  {/* New comment form for this line */}
+                  {showForm && (
+                    <NewCommentForm
+                      onAdd={async (body) => {
+                        await onAddComment(body, lineNum);
+                        setCommentFormLine(null);
+                      }}
+                      onCancel={() => setCommentFormLine(null)}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
-          {(chunk.comments.length > 0 || commentFormOpen) && (
-            <InlineComment
-              comments={chunk.comments}
-              showForm={commentFormOpen}
-              onAdd={async (body) => {
-                await onAddComment(body);
-                setCommentFormOpen(false);
-              }}
-              onCancelForm={() => setCommentFormOpen(false)}
-              onUpdate={onUpdateComment}
-              onDelete={onDeleteComment}
-              onPublish={onPublishComment}
-            />
-          )}
         </div>
       )}
     </div>
@@ -374,16 +458,22 @@ function FileBox({
   group,
   onToggleReviewed,
   onAddComment,
+  onReplyComment,
   onUpdateComment,
   onDeleteComment,
   onPublishComment,
+  onResolveThread,
+  onUnresolveThread,
 }: {
   group: FileGroup;
   onToggleReviewed: (chunkId: number) => void;
-  onAddComment: (chunkId: number, body: string) => Promise<void>;
+  onAddComment: (chunkId: number, body: string, line: number) => Promise<void>;
+  onReplyComment: (chunkId: number, parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
   onPublishComment: (commentId: number) => Promise<void>;
+  onResolveThread: (commentId: number) => Promise<void>;
+  onUnresolveThread: (commentId: number) => Promise<void>;
 }): React.ReactElement {
   return (
     <div className="overflow-hidden rounded-lg border border-border-primary bg-surface-primary">
@@ -402,10 +492,13 @@ function FileBox({
           key={chunk.id}
           chunk={chunk}
           onToggleReviewed={() => onToggleReviewed(chunk.id)}
-          onAddComment={(body) => onAddComment(chunk.id, body)}
+          onAddComment={(body, line) => onAddComment(chunk.id, body, line)}
+          onReplyComment={(parentId, body) => onReplyComment(chunk.id, parentId, body)}
           onUpdateComment={onUpdateComment}
           onDeleteComment={onDeleteComment}
           onPublishComment={onPublishComment}
+          onResolveThread={onResolveThread}
+          onUnresolveThread={onUnresolveThread}
           isLast={i === group.chunks.length - 1}
         />
       ))}
@@ -419,9 +512,12 @@ export const DiffViewer = memo(function DiffViewer({
   chunks,
   onToggleReviewed,
   onAddComment,
+  onReplyComment,
   onUpdateComment,
   onDeleteComment,
   onPublishComment,
+  onResolveThread,
+  onUnresolveThread,
 }: DiffViewerProps): React.ReactElement {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -503,9 +599,12 @@ export const DiffViewer = memo(function DiffViewer({
               group={fileGroups[virtualRow.index]}
               onToggleReviewed={onToggleReviewed}
               onAddComment={onAddComment}
+              onReplyComment={onReplyComment}
               onUpdateComment={onUpdateComment}
               onDeleteComment={onDeleteComment}
               onPublishComment={onPublishComment}
+              onResolveThread={onResolveThread}
+              onUnresolveThread={onUnresolveThread}
             />
           </div>
         ))}

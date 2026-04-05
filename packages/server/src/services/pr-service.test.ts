@@ -161,10 +161,11 @@ describe('PrService.reconcileChunks', () => {
     );
 
     // Add comment
-    db.prepare('INSERT INTO comments (chunk_id, pr_id, body) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO comments (chunk_id, pr_id, body, line) VALUES (?, ?, ?, ?)').run(
       chunkId,
       prId,
       'Test comment',
+      12,
     );
 
     // Sync again
@@ -203,10 +204,11 @@ describe('PrService.reconcileChunks', () => {
       chunkId,
       'high',
     );
-    db.prepare('INSERT INTO comments (chunk_id, pr_id, body) VALUES (?, ?, ?)').run(
+    db.prepare('INSERT INTO comments (chunk_id, pr_id, body, line) VALUES (?, ?, ?, ?)').run(
       chunkId,
       prId,
       'will be deleted',
+      10,
     );
 
     // Sync with empty — removes chunkA

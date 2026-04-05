@@ -1,5 +1,6 @@
 import type { PrState, PullRequest, SyncResult } from '@pr-review/shared';
 import type Database from 'better-sqlite3';
+import { CommentService } from './comment-service.js';
 import { flattenChunks, parseDiff } from './diff-parser.js';
 import { GitService } from './git.js';
 import { getOctokit } from './github-client.js';
@@ -122,7 +123,19 @@ export class PrService {
 
     // Recompute diff and update chunks
     const updatedPr = this.db.prepare('SELECT * FROM prs WHERE id = ?').get(prId) as PrDbRow;
-    return this.fetchAndStoreDiff(updatedPr);
+    const result = await this.fetchAndStoreDiff(updatedPr);
+
+    // Import GitHub comments (new replies, etc.)
+    const commentService = new CommentService({ db: this.db });
+    await commentService.importGitHubComments(
+      prId,
+      updatedPr.owner,
+      updatedPr.repo,
+      updatedPr.number,
+      updatedPr.gh_host,
+    );
+
+    return result;
   }
 
   /**

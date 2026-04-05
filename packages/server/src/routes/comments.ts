@@ -21,20 +21,23 @@ export function createCommentRoutes(db: Database.Database): Router {
 
   /**
    * POST /api/comments
-   * Create a new comment on a chunk.
+   * Create a new comment on a chunk at a specific line.
+   * Body: { chunkId, prId, body, line, parentId? }
    */
   router.post('/comments', (req, res) => {
     try {
-      const { chunkId, prId, body } = req.body as {
+      const { chunkId, prId, body, line, parentId } = req.body as {
         chunkId: number;
         prId: number;
         body: string;
+        line: number;
+        parentId?: number;
       };
-      if (!chunkId || !prId || !body) {
-        res.status(400).json({ error: 'chunkId, prId, and body are required' });
+      if (!chunkId || !prId || !body || line == null) {
+        res.status(400).json({ error: 'chunkId, prId, body, and line are required' });
         return;
       }
-      const comment = commentService.createComment(chunkId, prId, body);
+      const comment = commentService.createComment(chunkId, prId, body, line, parentId);
       res.status(201).json(comment);
     } catch (error) {
       res.status(500).json({ error: errorMessage(error) });
@@ -144,6 +147,42 @@ export function createCommentRoutes(db: Database.Database): Router {
       res.json({ published: count });
     } catch (error) {
       res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /**
+   * POST /api/comments/:id/resolve
+   * Resolve a comment thread.
+   */
+  router.post('/comments/:id/resolve', (req, res) => {
+    try {
+      const comment = commentService.resolveThread(Number(req.params.id));
+      res.json(comment);
+    } catch (error) {
+      const msg = errorMessage(error);
+      if (msg.includes('not found')) {
+        res.status(404).json({ error: msg });
+        return;
+      }
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  /**
+   * POST /api/comments/:id/unresolve
+   * Unresolve a comment thread.
+   */
+  router.post('/comments/:id/unresolve', (req, res) => {
+    try {
+      const comment = commentService.unresolveThread(Number(req.params.id));
+      res.json(comment);
+    } catch (error) {
+      const msg = errorMessage(error);
+      if (msg.includes('not found')) {
+        res.status(404).json({ error: msg });
+        return;
+      }
+      res.status(500).json({ error: msg });
     }
   });
 

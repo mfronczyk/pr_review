@@ -7,7 +7,10 @@ export interface CommentServiceOptions {
 }
 
 /**
- * Service for comment CRUD and GitHub publishing.
+ * Service for threaded comment CRUD, resolve/unresolve, and GitHub publishing.
+ *
+ * Comments are anchored to a specific new-file line within a chunk.
+ * A thread is a root comment (parentId = null) plus flat replies (parentId = root.id).
  */
 export class CommentService {
   private readonly db: Database.Database;
@@ -17,16 +20,38 @@ export class CommentService {
   }
 
   /**
-   * Create a new local comment on a chunk.
+   * Create a new local comment on a chunk at a specific line.
+   * If parentId is provided, this is a reply to an existing thread root.
    */
-  createComment(chunkId: number, prId: number, body: string): Comment {
+  createComment(
+    chunkId: number,
+    prId: number,
+    body: string,
+    line: number,
+    parentId?: number | null,
+  ): Comment {
+    if (parentId != null) {
+      const parent = this.db.prepare('SELECT * FROM comments WHERE id = ?').get(parentId) as
+        | CommentDbRow
+        | undefined;
+      if (!parent) {
+        throw new Error(`Parent comment not found: ${parentId}`);
+      }
+      if (parent.parent_id != null) {
+        throw new Error('Cannot reply to a reply — only root comments can have replies');
+      }
+      if (parent.chunk_id !== chunkId) {
+        throw new Error('Reply must belong to the same chunk as the parent');
+      }
+    }
+
     const row = this.db
       .prepare(
-        `INSERT INTO comments (chunk_id, pr_id, body)
-       VALUES (?, ?, ?)
+        `INSERT INTO comments (chunk_id, pr_id, body, line, parent_id)
+       VALUES (?, ?, ?, ?, ?)
        RETURNING *`,
       )
-      .get(chunkId, prId, body) as CommentDbRow;
+      .get(chunkId, prId, body, line, parentId ?? null) as CommentDbRow;
 
     return mapCommentRow(row);
   }
@@ -45,6 +70,7 @@ export class CommentService {
 
   /**
    * Delete a comment. Only allows deleting unpublished comments.
+   * If deleting a root comment, cascade-deletes all replies (handled by FK CASCADE).
    */
   deleteComment(commentId: number): boolean {
     const row = this.db.prepare('SELECT * FROM comments WHERE id = ?').get(commentId) as
@@ -69,10 +95,46 @@ export class CommentService {
   }
 
   /**
+   * Resolve a thread (set resolved = 1 on the root comment).
+   */
+  resolveThread(commentId: number): Comment {
+    const row = this.db.prepare('SELECT * FROM comments WHERE id = ?').get(commentId) as
+      | CommentDbRow
+      | undefined;
+    if (!row) throw new Error(`Comment not found: ${commentId}`);
+    if (row.parent_id != null) {
+      throw new Error('Can only resolve root comments (thread roots)');
+    }
+    this.db.prepare('UPDATE comments SET resolved = 1 WHERE id = ?').run(commentId);
+    const updated = this.db
+      .prepare('SELECT * FROM comments WHERE id = ?')
+      .get(commentId) as CommentDbRow;
+    return mapCommentRow(updated);
+  }
+
+  /**
+   * Unresolve a thread (set resolved = 0 on the root comment).
+   */
+  unresolveThread(commentId: number): Comment {
+    const row = this.db.prepare('SELECT * FROM comments WHERE id = ?').get(commentId) as
+      | CommentDbRow
+      | undefined;
+    if (!row) throw new Error(`Comment not found: ${commentId}`);
+    if (row.parent_id != null) {
+      throw new Error('Can only unresolve root comments (thread roots)');
+    }
+    this.db.prepare('UPDATE comments SET resolved = 0 WHERE id = ?').run(commentId);
+    const updated = this.db
+      .prepare('SELECT * FROM comments WHERE id = ?')
+      .get(commentId) as CommentDbRow;
+    return mapCommentRow(updated);
+  }
+
+  /**
    * Publish a single comment to GitHub as a PR review comment.
    *
-   * Uses the chunk's file path and line range to anchor the comment
-   * to the correct location in the diff.
+   * Root comments: uses createReviewComment with line, path, side: 'RIGHT'.
+   * Replies: uses createReplyForReviewComment with in_reply_to = parent's gh_comment_id.
    */
   async publishComment(
     commentId: number,
@@ -88,28 +150,55 @@ export class CommentService {
     if (!comment) throw new Error(`Comment not found: ${commentId}`);
     if (comment.published_at) throw new Error('Comment already published');
 
-    // Get the chunk to know the file path and line
-    const chunk = this.db.prepare('SELECT * FROM chunks WHERE id = ?').get(comment.chunk_id) as
-      | { file_path: string; end_line: number }
-      | undefined;
-    if (!chunk) throw new Error(`Chunk not found for comment: ${commentId}`);
-
     const octokit = await getOctokit(ghHost);
 
-    const { data: ghComment } = await octokit.pulls.createReviewComment({
-      owner,
-      repo,
-      pull_number: prNumber,
-      body: comment.body,
-      commit_id: commitSha,
-      path: chunk.file_path,
-      line: chunk.end_line,
-      side: 'RIGHT',
-    });
+    if (comment.parent_id != null) {
+      // This is a reply — find parent's gh_comment_id
+      const parent = this.db
+        .prepare('SELECT * FROM comments WHERE id = ?')
+        .get(comment.parent_id) as CommentDbRow | undefined;
+      if (!parent) throw new Error(`Parent comment not found: ${comment.parent_id}`);
+      if (!parent.gh_comment_id) {
+        throw new Error('Cannot publish reply — parent comment has not been published yet');
+      }
 
-    this.db
-      .prepare("UPDATE comments SET gh_comment_id = ?, published_at = datetime('now') WHERE id = ?")
-      .run(ghComment.id, commentId);
+      const { data: ghComment } = await octokit.pulls.createReplyForReviewComment({
+        owner,
+        repo,
+        pull_number: prNumber,
+        comment_id: parent.gh_comment_id,
+        body: comment.body,
+      });
+
+      this.db
+        .prepare(
+          "UPDATE comments SET gh_comment_id = ?, published_at = datetime('now') WHERE id = ?",
+        )
+        .run(ghComment.id, commentId);
+    } else {
+      // Root comment — anchor to file line
+      const chunk = this.db.prepare('SELECT * FROM chunks WHERE id = ?').get(comment.chunk_id) as
+        | { file_path: string }
+        | undefined;
+      if (!chunk) throw new Error(`Chunk not found for comment: ${commentId}`);
+
+      const { data: ghComment } = await octokit.pulls.createReviewComment({
+        owner,
+        repo,
+        pull_number: prNumber,
+        body: comment.body,
+        commit_id: commitSha,
+        path: chunk.file_path,
+        line: comment.line,
+        side: 'RIGHT',
+      });
+
+      this.db
+        .prepare(
+          "UPDATE comments SET gh_comment_id = ?, published_at = datetime('now') WHERE id = ?",
+        )
+        .run(ghComment.id, commentId);
+    }
 
     const updated = this.db
       .prepare('SELECT * FROM comments WHERE id = ?')
@@ -119,6 +208,7 @@ export class CommentService {
 
   /**
    * Publish all unpublished comments for a PR.
+   * Publishes root comments first, then replies (so parents have gh_comment_id).
    */
   async publishAllForPr(
     prId: number,
@@ -128,8 +218,13 @@ export class CommentService {
     ghHost: string,
     commitSha: string,
   ): Promise<number> {
+    // Roots first (parent_id IS NULL), then replies
     const unpublished = this.db
-      .prepare('SELECT id FROM comments WHERE pr_id = ? AND published_at IS NULL')
+      .prepare(
+        `SELECT id FROM comments
+       WHERE pr_id = ? AND published_at IS NULL
+       ORDER BY parent_id IS NOT NULL, created_at`,
+      )
       .all(prId) as Array<{ id: number }>;
 
     let published = 0;
@@ -138,6 +233,106 @@ export class CommentService {
       published++;
     }
     return published;
+  }
+
+  /**
+   * Import GitHub review comments during sync.
+   * Matches existing comments by gh_comment_id to avoid duplicates.
+   * New comments are inserted with their author set.
+   */
+  async importGitHubComments(
+    prId: number,
+    owner: string,
+    repo: string,
+    prNumber: number,
+    ghHost: string,
+  ): Promise<number> {
+    const octokit = await getOctokit(ghHost);
+
+    // Fetch all review comments from GitHub
+    const ghComments = await octokit.paginate(octokit.pulls.listReviewComments, {
+      owner,
+      repo,
+      pull_number: prNumber,
+      per_page: 100,
+    });
+
+    // Get existing gh_comment_ids to avoid duplicates
+    const existingGhIds = new Set(
+      (
+        this.db
+          .prepare(
+            'SELECT gh_comment_id FROM comments WHERE pr_id = ? AND gh_comment_id IS NOT NULL',
+          )
+          .all(prId) as Array<{ gh_comment_id: number }>
+      ).map((r) => r.gh_comment_id),
+    );
+
+    // Build a map from file_path to chunks for this PR
+    const chunks = this.db
+      .prepare('SELECT id, file_path, start_line, end_line FROM chunks WHERE pr_id = ?')
+      .all(prId) as Array<{
+      id: number;
+      file_path: string;
+      start_line: number;
+      end_line: number;
+    }>;
+
+    // Map gh_comment_id to local comment id (for threading)
+    const ghIdToLocalId = new Map<number, number>();
+    const existingComments = this.db
+      .prepare(
+        'SELECT id, gh_comment_id FROM comments WHERE pr_id = ? AND gh_comment_id IS NOT NULL',
+      )
+      .all(prId) as Array<{ id: number; gh_comment_id: number }>;
+    for (const c of existingComments) {
+      ghIdToLocalId.set(c.gh_comment_id, c.id);
+    }
+
+    let imported = 0;
+
+    for (const ghComment of ghComments) {
+      if (existingGhIds.has(ghComment.id)) continue;
+
+      // Find the chunk this comment belongs to
+      const commentLine = ghComment.line ?? ghComment.original_line ?? 0;
+      const commentPath = ghComment.path;
+      const chunk = chunks.find(
+        (c) =>
+          c.file_path === commentPath && commentLine >= c.start_line && commentLine <= c.end_line,
+      );
+      if (!chunk) continue; // Comment is on a line we don't have a chunk for
+
+      // Determine parent_id for threaded replies
+      let parentId: number | null = null;
+      if (ghComment.in_reply_to_id) {
+        parentId = ghIdToLocalId.get(ghComment.in_reply_to_id) ?? null;
+      }
+
+      const row = this.db
+        .prepare(
+          `INSERT INTO comments (chunk_id, pr_id, body, line, parent_id, author, gh_comment_id, published_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         RETURNING *`,
+        )
+        .get(
+          chunk.id,
+          prId,
+          ghComment.body,
+          commentLine,
+          parentId,
+          ghComment.user?.login ?? 'unknown',
+          ghComment.id,
+          ghComment.created_at,
+          ghComment.created_at,
+        ) as CommentDbRow;
+
+      ghIdToLocalId.set(ghComment.id, row.id);
+      existingGhIds.add(ghComment.id);
+      imported++;
+    }
+
+    return imported;
   }
 }
 
@@ -148,7 +343,11 @@ interface CommentDbRow {
   chunk_id: number;
   pr_id: number;
   body: string;
+  line: number;
+  parent_id: number | null;
+  author: string | null;
   gh_comment_id: number | null;
+  resolved: number;
   created_at: string;
   published_at: string | null;
 }
@@ -161,7 +360,11 @@ function mapCommentRow(row: CommentDbRow): Comment {
     chunkId: row.chunk_id,
     prId: row.pr_id,
     body: row.body,
+    line: row.line,
+    parentId: row.parent_id,
+    author: row.author,
     ghCommentId: row.gh_comment_id,
+    resolved: Boolean(row.resolved),
     createdAt: row.created_at,
     publishedAt: row.published_at,
   };

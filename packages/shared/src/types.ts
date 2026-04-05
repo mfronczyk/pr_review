@@ -91,9 +91,22 @@ export interface Comment {
   chunkId: number;
   prId: number;
   body: string;
+  line: number;
+  parentId: number | null;
+  author: string | null;
   ghCommentId: number | null;
+  resolved: boolean;
   createdAt: string;
   publishedAt: string | null;
+}
+
+/**
+ * A thread is a root comment plus its flat list of replies.
+ * Grouped on the client from the flat Comment[] array.
+ */
+export interface CommentThread {
+  root: Comment;
+  replies: Comment[];
 }
 
 // ── LLM Run ─────────────────────────────────────────────────

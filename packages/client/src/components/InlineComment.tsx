@@ -1,20 +1,30 @@
 /**
- * InlineComment – shows existing comments and a form to add/edit comments on a chunk.
+ * InlineComment – renders a single comment thread (root + replies) inline in the diff.
+ * Supports resolve/unresolve, reply, edit, delete, and publish actions.
  */
 
 import { useState } from 'react';
 
-import type { Comment } from '@pr-review/shared';
+import type { Comment, CommentThread } from '@pr-review/shared';
 
-interface InlineCommentProps {
-  comments: Comment[];
-  showForm: boolean;
-  onAdd: (body: string) => Promise<void>;
-  onCancelForm: () => void;
+interface InlineThreadProps {
+  thread: CommentThread;
+  onReply: (parentId: number, body: string) => Promise<void>;
   onUpdate: (id: number, body: string) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
   onPublish: (id: number) => Promise<void>;
+  onResolve: (id: number) => Promise<void>;
+  onUnresolve: (id: number) => Promise<void>;
 }
+
+interface AddCommentFormProps {
+  onAdd: (body: string) => Promise<void>;
+  onCancel: () => void;
+  placeholder?: string;
+  submitLabel?: string;
+}
+
+// ── Single Comment Item ─────────────────────────────────────
 
 function CommentItem({
   comment,
@@ -30,6 +40,9 @@ function CommentItem({
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(comment.body);
   const [saving, setSaving] = useState(false);
+
+  const authorLabel = comment.author ? `@${comment.author}` : 'You';
+  const isLocal = !comment.author;
 
   async function handleSave(): Promise<void> {
     if (!body.trim()) return;
@@ -96,13 +109,20 @@ function CommentItem({
   return (
     <div className="group flex items-start gap-2 rounded bg-surface-secondary/50 p-2">
       <div className="min-w-0 flex-1">
-        <p className="whitespace-pre-wrap text-xs text-fg-secondary">{comment.body}</p>
-        <div className="mt-1 flex items-center gap-2 text-[10px] text-fg-muted">
-          <span>{new Date(comment.createdAt).toLocaleString()}</span>
-          {comment.publishedAt && <span className="text-success-fg">Published</span>}
+        <div className="mb-0.5 flex items-center gap-1.5">
+          <span
+            className={`text-[10px] font-medium ${isLocal ? 'text-blue-500' : 'text-fg-tertiary'}`}
+          >
+            {authorLabel}
+          </span>
+          <span className="text-[10px] text-fg-muted">
+            {new Date(comment.createdAt).toLocaleString()}
+          </span>
+          {comment.publishedAt && <span className="text-[10px] text-success-fg">Published</span>}
         </div>
+        <p className="whitespace-pre-wrap text-xs text-fg-secondary">{comment.body}</p>
       </div>
-      {!comment.publishedAt && (
+      {isLocal && !comment.publishedAt && (
         <div className="hidden flex-shrink-0 gap-1 group-hover:flex">
           <button
             type="button"
@@ -133,13 +153,14 @@ function CommentItem({
   );
 }
 
+// ── Add Comment Form ────────────────────────────────────────
+
 function AddCommentForm({
   onAdd,
   onCancel,
-}: {
-  onAdd: (body: string) => Promise<void>;
-  onCancel: () => void;
-}): React.ReactElement {
+  placeholder = 'Write a review comment...',
+  submitLabel = 'Add Comment',
+}: AddCommentFormProps): React.ReactElement {
   const [body, setBody] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -159,7 +180,7 @@ function AddCommentForm({
       <textarea
         value={body}
         onChange={(e) => setBody(e.target.value)}
-        placeholder="Write a review comment..."
+        placeholder={placeholder}
         className="min-h-[60px] w-full resize-y rounded border border-border-primary bg-surface-input px-2 py-1 text-xs text-fg-primary placeholder-fg-muted focus:border-blue-500 focus:outline-none"
         disabled={saving}
       />
@@ -170,7 +191,7 @@ function AddCommentForm({
           disabled={saving || !body.trim()}
           className="rounded bg-blue-600 px-2 py-0.5 text-xs text-white hover:bg-blue-500 disabled:opacity-50"
         >
-          {saving ? 'Adding...' : 'Add Comment'}
+          {saving ? 'Saving...' : submitLabel}
         </button>
         <button
           type="button"
@@ -187,27 +208,116 @@ function AddCommentForm({
   );
 }
 
-export function InlineComment({
-  comments,
-  showForm,
+// ── New Comment Form (for starting a new thread) ────────────
+
+export function NewCommentForm({
   onAdd,
-  onCancelForm,
+  onCancel,
+}: {
+  onAdd: (body: string) => Promise<void>;
+  onCancel: () => void;
+}): React.ReactElement {
+  return (
+    <div className="border-t border-border-secondary bg-surface-primary/50 px-3 py-2">
+      <AddCommentForm onAdd={onAdd} onCancel={onCancel} />
+    </div>
+  );
+}
+
+// ── Thread Component ────────────────────────────────────────
+
+export function InlineThread({
+  thread,
+  onReply,
   onUpdate,
   onDelete,
   onPublish,
-}: InlineCommentProps): React.ReactElement {
+  onResolve,
+  onUnresolve,
+}: InlineThreadProps): React.ReactElement {
+  const [replying, setReplying] = useState(false);
+  const { root, replies } = thread;
+
+  if (root.resolved) {
+    // Collapsed resolved thread — single line
+    return (
+      <div className="border-t border-border-secondary bg-surface-primary/50 px-3 py-1.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-xs text-fg-muted">
+            <span className="text-[10px] font-medium text-fg-tertiary">
+              {root.author ? `@${root.author}` : 'You'}
+            </span>
+            <span className="truncate italic opacity-60">{root.body}</span>
+            <span className="rounded bg-green-100 px-1 py-0.5 text-[10px] text-green-700 dark:bg-green-900/50 dark:text-green-300">
+              Resolved
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => onUnresolve(root.id)}
+            className="rounded px-1.5 py-0.5 text-[10px] text-fg-tertiary hover:bg-surface-tertiary hover:text-fg-primary"
+          >
+            Unresolve
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-1.5 border-t border-border-secondary bg-surface-primary/50 px-3 py-2">
-      {comments.map((c) => (
-        <CommentItem
-          key={c.id}
-          comment={c}
-          onUpdate={onUpdate}
-          onDelete={onDelete}
-          onPublish={onPublish}
-        />
-      ))}
-      {showForm && <AddCommentForm onAdd={onAdd} onCancel={onCancelForm} />}
+      {/* Root comment */}
+      <CommentItem comment={root} onUpdate={onUpdate} onDelete={onDelete} onPublish={onPublish} />
+
+      {/* Replies */}
+      {replies.length > 0 && (
+        <div className="ml-4 space-y-1.5 border-l-2 border-border-secondary pl-2">
+          {replies.map((reply) => (
+            <CommentItem
+              key={reply.id}
+              comment={reply}
+              onUpdate={onUpdate}
+              onDelete={onDelete}
+              onPublish={onPublish}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Actions bar */}
+      <div className="flex items-center gap-2">
+        {!replying && (
+          <button
+            type="button"
+            onClick={() => setReplying(true)}
+            className="rounded px-1.5 py-0.5 text-[10px] text-blue-500 hover:bg-blue-100 hover:text-blue-700 dark:hover:bg-blue-900/50 dark:hover:text-blue-300"
+          >
+            Reply
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => onResolve(root.id)}
+          className="rounded px-1.5 py-0.5 text-[10px] text-green-600 hover:bg-green-100 hover:text-green-700 dark:text-green-400 dark:hover:bg-green-900/50 dark:hover:text-green-300"
+        >
+          Resolve
+        </button>
+      </div>
+
+      {/* Reply form */}
+      {replying && (
+        <div className="ml-4 border-l-2 border-border-secondary pl-2">
+          <AddCommentForm
+            onAdd={async (body) => {
+              await onReply(root.id, body);
+              setReplying(false);
+            }}
+            onCancel={() => setReplying(false)}
+            placeholder="Write a reply..."
+            submitLabel="Reply"
+          />
+        </div>
+      )}
     </div>
   );
 }

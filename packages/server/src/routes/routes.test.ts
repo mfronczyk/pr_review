@@ -152,21 +152,33 @@ describe('Chunk routes', () => {
 describe('Comment routes', () => {
   let commentId: number;
 
-  it('POST /api/comments should create a comment', async () => {
+  it('POST /api/comments should create a comment with line', async () => {
     const res = await request(app)
       .post('/api/comments')
-      .send({ chunkId: 1, prId: 1, body: 'Test comment' });
+      .send({ chunkId: 1, prId: 1, body: 'Test comment', line: 3 });
     expect(res.status).toBe(201);
     expect(res.body).toHaveProperty('id');
     expect(res.body).toHaveProperty('body', 'Test comment');
+    expect(res.body).toHaveProperty('line', 3);
+    expect(res.body).toHaveProperty('parentId', null);
+    expect(res.body).toHaveProperty('author', null);
+    expect(res.body).toHaveProperty('resolved', false);
     commentId = res.body.id;
+  });
+
+  it('POST /api/comments should create a reply', async () => {
+    const res = await request(app)
+      .post('/api/comments')
+      .send({ chunkId: 1, prId: 1, body: 'Reply text', line: 3, parentId: commentId });
+    expect(res.status).toBe(201);
+    expect(res.body).toHaveProperty('parentId', commentId);
   });
 
   it('GET /api/prs/:prId/comments should return comments', async () => {
     const res = await request(app).get('/api/prs/1/comments');
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body.length).toBeGreaterThanOrEqual(1);
+    expect(res.body.length).toBeGreaterThanOrEqual(2);
   });
 
   it('PATCH /api/comments/:id should update comment body', async () => {
@@ -182,7 +194,30 @@ describe('Comment routes', () => {
     expect(res.status).toBe(400);
   });
 
+  it('POST /api/comments/:id/resolve should resolve a thread', async () => {
+    const res = await request(app).post(`/api/comments/${commentId}/resolve`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('resolved', true);
+  });
+
+  it('POST /api/comments/:id/unresolve should unresolve a thread', async () => {
+    const res = await request(app).post(`/api/comments/${commentId}/unresolve`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('resolved', false);
+  });
+
+  it('POST /api/comments/:id/resolve should return 404 for missing comment', async () => {
+    const res = await request(app).post('/api/comments/999/resolve');
+    expect(res.status).toBe(404);
+  });
+
   it('DELETE /api/comments/:id should delete unpublished comment', async () => {
+    // Delete the reply first (it was created in second test above)
+    const comments = await request(app).get('/api/prs/1/comments');
+    const reply = comments.body.find((c: { parentId: number | null }) => c.parentId === commentId);
+    if (reply) {
+      await request(app).delete(`/api/comments/${reply.id}`);
+    }
     const res = await request(app).delete(`/api/comments/${commentId}`);
     expect(res.status).toBe(204);
   });
@@ -194,6 +229,13 @@ describe('Comment routes', () => {
 
   it('POST /api/comments should reject missing fields', async () => {
     const res = await request(app).post('/api/comments').send({ chunkId: 1 });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /api/comments should reject missing line', async () => {
+    const res = await request(app)
+      .post('/api/comments')
+      .send({ chunkId: 1, prId: 1, body: 'No line' });
     expect(res.status).toBe(400);
   });
 });

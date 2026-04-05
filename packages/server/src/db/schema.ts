@@ -90,7 +90,11 @@ function createTables(db: Database.Database): void {
       chunk_id      INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
       pr_id         INTEGER NOT NULL REFERENCES prs(id) ON DELETE CASCADE,
       body          TEXT NOT NULL,
+      line          INTEGER NOT NULL,
+      parent_id     INTEGER REFERENCES comments(id) ON DELETE CASCADE,
+      author        TEXT,
       gh_comment_id INTEGER,
+      resolved      INTEGER NOT NULL DEFAULT 0,
       created_at    TEXT NOT NULL DEFAULT (datetime('now')),
       published_at  TEXT
     );
@@ -110,6 +114,7 @@ function createTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_chunk_tags_tag_id ON chunk_tags(tag_id);
     CREATE INDEX IF NOT EXISTS idx_comments_chunk_id ON comments(chunk_id);
     CREATE INDEX IF NOT EXISTS idx_comments_pr_id ON comments(pr_id);
+    CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON comments(parent_id);
     CREATE INDEX IF NOT EXISTS idx_llm_runs_pr_id ON llm_runs(pr_id);
   `);
 }

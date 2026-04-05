@@ -228,7 +228,11 @@ interface CommentDbRow {
   chunk_id: number;
   pr_id: number;
   body: string;
+  line: number;
+  parent_id: number | null;
+  author: string | null;
   gh_comment_id: number | null;
+  resolved: number;
   created_at: string;
   published_at: string | null;
 }
@@ -275,7 +279,11 @@ function mapCommentRow(row: CommentDbRow): Comment {
     chunkId: row.chunk_id,
     prId: row.pr_id,
     body: row.body,
+    line: row.line,
+    parentId: row.parent_id,
+    author: row.author,
     ghCommentId: row.gh_comment_id,
+    resolved: Boolean(row.resolved),
     createdAt: row.created_at,
     publishedAt: row.published_at,
   };

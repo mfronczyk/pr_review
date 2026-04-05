@@ -640,9 +640,9 @@ export function ReviewPage(): React.ReactElement {
   );
 
   const handleAddComment = useCallback(
-    async (chunkId: number, body: string): Promise<void> => {
+    async (chunkId: number, body: string, line: number): Promise<void> => {
       await withErrorHandling(async () => {
-        const comment = await api.createComment({ chunkId, prId, body });
+        const comment = await api.createComment({ chunkId, prId, body, line });
         // Optimistically add the comment to local state
         setChunks((prev) => {
           if (!prev) return prev;
@@ -653,6 +653,24 @@ export function ReviewPage(): React.ReactElement {
       });
     },
     [prId, withErrorHandling],
+  );
+
+  const handleReplyComment = useCallback(
+    async (chunkId: number, parentId: number, body: string): Promise<void> => {
+      await withErrorHandling(async () => {
+        // Find the parent to get line number
+        const parentComment = chunks?.flatMap((c) => c.comments).find((cm) => cm.id === parentId);
+        const line = parentComment?.line ?? 0;
+        const comment = await api.createComment({ chunkId, prId, body, line, parentId });
+        setChunks((prev) => {
+          if (!prev) return prev;
+          return prev.map((c) =>
+            c.id === chunkId ? { ...c, comments: [...c.comments, comment] } : c,
+          );
+        });
+      });
+    },
+    [prId, chunks, withErrorHandling],
   );
 
   const handleUpdateComment = useCallback(
@@ -708,6 +726,38 @@ export function ReviewPage(): React.ReactElement {
       });
     },
     [pr, withErrorHandling],
+  );
+
+  const handleResolveThread = useCallback(
+    async (commentId: number): Promise<void> => {
+      await withErrorHandling(async () => {
+        const resolved = await api.resolveThread(commentId);
+        setChunks((prev) => {
+          if (!prev) return prev;
+          return prev.map((c) => ({
+            ...c,
+            comments: c.comments.map((cm) => (cm.id === commentId ? resolved : cm)),
+          }));
+        });
+      });
+    },
+    [withErrorHandling],
+  );
+
+  const handleUnresolveThread = useCallback(
+    async (commentId: number): Promise<void> => {
+      await withErrorHandling(async () => {
+        const unresolved = await api.unresolveThread(commentId);
+        setChunks((prev) => {
+          if (!prev) return prev;
+          return prev.map((c) => ({
+            ...c,
+            comments: c.comments.map((cm) => (cm.id === commentId ? unresolved : cm)),
+          }));
+        });
+      });
+    },
+    [withErrorHandling],
   );
 
   async function handlePublishAll(): Promise<void> {
@@ -812,9 +862,12 @@ export function ReviewPage(): React.ReactElement {
               chunks={filteredChunks}
               onToggleReviewed={handleToggleReviewed}
               onAddComment={handleAddComment}
+              onReplyComment={handleReplyComment}
               onUpdateComment={handleUpdateComment}
               onDeleteComment={handleDeleteComment}
               onPublishComment={handlePublishComment}
+              onResolveThread={handleResolveThread}
+              onUnresolveThread={handleUnresolveThread}
             />
           )}
         </div>
