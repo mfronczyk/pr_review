@@ -38,6 +38,190 @@ function ErrorBanner({
   );
 }
 
+// ── Progress Dots ───────────────────────────────────────────
+
+function ProgressDots({
+  total,
+  reviewed,
+  color,
+}: {
+  total: number;
+  reviewed: number;
+  color: string;
+}): React.ReactElement {
+  // For large groups, show a compact bar instead of individual dots
+  if (total > 20) {
+    const pct = total === 0 ? 0 : Math.round((reviewed / total) * 100);
+    return (
+      <div className="flex items-center gap-1.5">
+        <div className="h-1 w-10 overflow-hidden rounded-full bg-gray-700">
+          <div
+            className="h-full rounded-full"
+            style={{ width: `${pct}%`, backgroundColor: '#22c55e' }}
+          />
+        </div>
+        <span className="text-[10px] text-gray-500">
+          {reviewed}/{total}
+        </span>
+      </div>
+    );
+  }
+
+  // Build stable keys: reviewed dots first, then unreviewed
+  const dots = useMemo(() => {
+    const result: Array<{ key: string; filled: boolean }> = [];
+    for (let i = 0; i < reviewed; i++) {
+      result.push({ key: `r${i}`, filled: true });
+    }
+    for (let i = 0; i < total - reviewed; i++) {
+      result.push({ key: `u${i}`, filled: false });
+    }
+    return result;
+  }, [total, reviewed]);
+
+  return (
+    <div className="flex flex-wrap items-center gap-0.5">
+      {dots.map((dot) => (
+        <span
+          key={dot.key}
+          className="inline-block h-1.5 w-1.5 rounded-full"
+          style={{
+            backgroundColor: dot.filled ? '#22c55e' : `${color}44`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ── File Tree ───────────────────────────────────────────────
+
+interface TreeNode {
+  name: string;
+  fullPath: string;
+  children: Map<string, TreeNode>;
+  isFile: boolean;
+}
+
+function buildFileTree(files: string[]): TreeNode {
+  const root: TreeNode = { name: '', fullPath: '', children: new Map(), isFile: false };
+  for (const filePath of files) {
+    const parts = filePath.split('/');
+    let current = root;
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const isLast = i === parts.length - 1;
+      let child = current.children.get(part);
+      if (!child) {
+        child = {
+          name: part,
+          fullPath: parts.slice(0, i + 1).join('/'),
+          children: new Map(),
+          isFile: isLast,
+        };
+        current.children.set(part, child);
+      }
+      if (isLast) {
+        child.isFile = true;
+        child.fullPath = filePath;
+      }
+      current = child;
+    }
+  }
+  return collapseTree(root);
+}
+
+/** Collapse single-child directory chains: a/b/c → a/b/c */
+function collapseTree(node: TreeNode): TreeNode {
+  const collapsed: Map<string, TreeNode> = new Map();
+  for (const [, child] of node.children) {
+    let current = child;
+    // Collapse chains of directories with only one child
+    while (!current.isFile && current.children.size === 1) {
+      const only = current.children.values().next().value;
+      if (!only) break;
+      current = {
+        name: `${current.name}/${only.name}`,
+        fullPath: only.fullPath,
+        children: only.children,
+        isFile: only.isFile,
+      };
+    }
+    // Recursively collapse children
+    const result = collapseTree(current);
+    collapsed.set(result.name, result);
+  }
+  return { ...node, children: collapsed };
+}
+
+function FileTreeNode({
+  node,
+  depth,
+  activeFilter,
+  onFilterByFile,
+  collapsedDirs,
+  onToggleDir,
+}: {
+  node: TreeNode;
+  depth: number;
+  activeFilter: { type: 'tag' | 'file'; value: string } | null;
+  onFilterByFile: (filePath: string) => void;
+  collapsedDirs: Set<string>;
+  onToggleDir: (dirPath: string) => void;
+}): React.ReactElement {
+  const isActive = activeFilter?.type === 'file' && activeFilter.value === node.fullPath;
+  const isCollapsed = collapsedDirs.has(node.fullPath);
+
+  if (node.isFile) {
+    return (
+      <button
+        type="button"
+        onClick={() => onFilterByFile(node.fullPath)}
+        className={`flex w-full items-center gap-1 rounded py-0.5 pr-1 text-left text-xs hover:bg-gray-800 ${
+          isActive ? 'bg-gray-800 text-white' : 'text-gray-300'
+        }`}
+        style={{ paddingLeft: `${depth * 12 + 4}px` }}
+        title={node.fullPath}
+      >
+        <span className="flex-shrink-0 text-gray-600">~</span>
+        <span className="truncate">{node.name}</span>
+      </button>
+    );
+  }
+
+  const sortedChildren = Array.from(node.children.values()).sort((a, b) => {
+    // Directories first, then files
+    if (a.isFile !== b.isFile) return a.isFile ? 1 : -1;
+    return a.name.localeCompare(b.name);
+  });
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => onToggleDir(node.fullPath)}
+        className="flex w-full items-center gap-1 rounded py-0.5 pr-1 text-left text-xs text-gray-500 hover:bg-gray-800 hover:text-gray-300"
+        style={{ paddingLeft: `${depth * 12 + 4}px` }}
+      >
+        <span className="flex-shrink-0 text-[10px]">{isCollapsed ? '▸' : '▾'}</span>
+        <span className="truncate">{node.name}/</span>
+      </button>
+      {!isCollapsed &&
+        sortedChildren.map((child) => (
+          <FileTreeNode
+            key={child.fullPath}
+            node={child}
+            depth={depth + 1}
+            activeFilter={activeFilter}
+            onFilterByFile={onFilterByFile}
+            collapsedDirs={collapsedDirs}
+            onToggleDir={onToggleDir}
+          />
+        ))}
+    </div>
+  );
+}
+
 // ── Sidebar ─────────────────────────────────────────────────
 
 function Sidebar({
@@ -60,6 +244,30 @@ function Sidebar({
   onBulkApprove: (tagId: number) => void;
 }): React.ReactElement {
   const [filesExpanded, setFilesExpanded] = useState(true);
+  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
+
+  const fileTree = useMemo(() => buildFileTree(files), [files]);
+
+  function handleToggleDir(dirPath: string): void {
+    setCollapsedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(dirPath)) {
+        next.delete(dirPath);
+      } else {
+        next.add(dirPath);
+      }
+      return next;
+    });
+  }
+
+  const sortedRootChildren = useMemo(
+    () =>
+      Array.from(fileTree.children.values()).sort((a, b) => {
+        if (a.isFile !== b.isFile) return a.isFile ? 1 : -1;
+        return a.name.localeCompare(b.name);
+      }),
+    [fileTree],
+  );
 
   return (
     <aside className="flex w-64 flex-shrink-0 flex-col overflow-y-auto border-r border-gray-800 bg-gray-900">
@@ -101,11 +309,11 @@ function Sidebar({
             Clear filter &times;
           </button>
         )}
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           {groups.map((g) => (
             <div
               key={g.tag.name}
-              className={`group flex items-center justify-between rounded px-2 py-1.5 text-xs cursor-pointer hover:bg-gray-800 ${
+              className={`group rounded px-2 py-1.5 text-xs cursor-pointer hover:bg-gray-800 ${
                 activeFilter?.type === 'tag' && activeFilter.value === g.tag.name
                   ? 'bg-gray-800 text-white'
                   : 'text-gray-300'
@@ -113,17 +321,14 @@ function Sidebar({
               onClick={() => onFilterByTag(g.tag.name)}
               onKeyDown={(e) => e.key === 'Enter' && onFilterByTag(g.tag.name)}
             >
-              <div className="flex items-center gap-2 min-w-0">
-                <span
-                  className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
-                  style={{ backgroundColor: g.tag.color || '#6b7280' }}
-                />
-                <span className="truncate">{g.tag.name}</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-gray-500">
-                  {g.reviewedCount}/{g.chunks.length}
-                </span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
+                    style={{ backgroundColor: g.tag.color || '#6b7280' }}
+                  />
+                  <span className="truncate">{g.tag.name}</span>
+                </div>
                 {g.reviewedCount < g.chunks.length && (
                   <button
                     type="button"
@@ -131,12 +336,19 @@ function Sidebar({
                       e.stopPropagation();
                       onBulkApprove(g.tag.id);
                     }}
-                    className="hidden rounded bg-green-800 px-1.5 py-0.5 text-[10px] text-green-200 hover:bg-green-700 group-hover:block"
+                    className="hidden flex-shrink-0 rounded bg-green-800 px-1.5 py-0.5 text-[10px] text-green-200 hover:bg-green-700 group-hover:block"
                     title="Approve all"
                   >
                     Approve
                   </button>
                 )}
+              </div>
+              <div className="mt-1 pl-4">
+                <ProgressDots
+                  total={g.chunks.length}
+                  reviewed={g.reviewedCount}
+                  color={g.tag.color || '#6b7280'}
+                />
               </div>
             </div>
           ))}
@@ -157,21 +369,17 @@ function Sidebar({
           <span>{filesExpanded ? '▾' : '▸'}</span>
         </button>
         {filesExpanded && (
-          <div className="space-y-0.5">
-            {files.map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => onFilterByFile(f)}
-                className={`block w-full truncate rounded px-2 py-1 text-left text-xs hover:bg-gray-800 ${
-                  activeFilter?.type === 'file' && activeFilter.value === f
-                    ? 'bg-gray-800 text-white'
-                    : 'text-gray-400'
-                }`}
-                title={f}
-              >
-                {f.split('/').pop()}
-              </button>
+          <div className="space-y-0">
+            {sortedRootChildren.map((child) => (
+              <FileTreeNode
+                key={child.fullPath}
+                node={child}
+                depth={0}
+                activeFilter={activeFilter}
+                onFilterByFile={onFilterByFile}
+                collapsedDirs={collapsedDirs}
+                onToggleDir={handleToggleDir}
+              />
             ))}
           </div>
         )}
@@ -489,7 +697,7 @@ export function ReviewPage(): React.ReactElement {
           unpublishedCount={unpublishedCount}
         />
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-hidden">
           {filteredChunks.length === 0 ? (
             <div className="py-12 text-center text-gray-500">
               {hideReviewed

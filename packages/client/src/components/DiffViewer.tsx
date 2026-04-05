@@ -1,9 +1,11 @@
 /**
- * DiffViewer – renders a list of diff chunks as a continuous scroll view.
- * Groups chunks by file and displays unified diff with syntax highlighting.
+ * DiffViewer – renders a list of diff chunks as a virtualized scroll view.
+ * Groups chunks by file and displays unified diff with color-coded lines.
+ * Uses @tanstack/react-virtual for efficient rendering of large PRs.
  */
 
-import { useMemo } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { useCallback, useMemo, useRef } from 'react';
 
 import { InlineComment } from '@/components/InlineComment';
 import type { ChunkWithDetails } from '@pr-review/shared';
@@ -19,10 +21,10 @@ interface DiffViewerProps {
   onPublishComment: (commentId: number) => Promise<void>;
 }
 
-interface FileGroup {
-  filePath: string;
-  chunks: ChunkWithDetails[];
-}
+/** A flattened row is either a file header or a chunk block. */
+type VirtualRow =
+  | { type: 'file-header'; filePath: string; chunkCount: number; allReviewed: boolean }
+  | { type: 'chunk'; chunk: ChunkWithDetails };
 
 // ── Tag Pill ────────────────────────────────────────────────
 
@@ -190,45 +192,64 @@ function ChunkBlock({
   );
 }
 
-// ── File Section ────────────────────────────────────────────
+// ── File Header ─────────────────────────────────────────────
 
-function FileSection({
-  file,
+function FileHeader({
+  filePath,
+  chunkCount,
+  allReviewed,
+}: {
+  filePath: string;
+  chunkCount: number;
+  allReviewed: boolean;
+}): React.ReactElement {
+  return (
+    <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-gray-700 bg-gray-950 px-4 py-2">
+      <span className="font-mono text-xs text-gray-300">{filePath}</span>
+      <span className="text-xs text-gray-600">
+        ({chunkCount} chunk{chunkCount !== 1 ? 's' : ''})
+      </span>
+      {allReviewed && <span className="text-xs text-green-600">✓ All reviewed</span>}
+    </div>
+  );
+}
+
+// ── Virtual Row Renderer ────────────────────────────────────
+
+function VirtualRowRenderer({
+  row,
   onToggleReviewed,
   onAddComment,
   onUpdateComment,
   onDeleteComment,
   onPublishComment,
 }: {
-  file: FileGroup;
+  row: VirtualRow;
   onToggleReviewed: (chunkId: number) => void;
   onAddComment: (chunkId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
   onPublishComment: (commentId: number) => Promise<void>;
 }): React.ReactElement {
-  const allReviewed = file.chunks.every((c) => c.reviewed);
+  if (row.type === 'file-header') {
+    return (
+      <FileHeader
+        filePath={row.filePath}
+        chunkCount={row.chunkCount}
+        allReviewed={row.allReviewed}
+      />
+    );
+  }
+
   return (
-    <div className="mb-4">
-      <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-gray-700 bg-gray-950 px-4 py-2">
-        <span className="font-mono text-xs text-gray-300">{file.filePath}</span>
-        <span className="text-xs text-gray-600">
-          ({file.chunks.length} chunk{file.chunks.length !== 1 ? 's' : ''})
-        </span>
-        {allReviewed && <span className="text-xs text-green-600">✓ All reviewed</span>}
-      </div>
-      {file.chunks.map((chunk) => (
-        <ChunkBlock
-          key={chunk.id}
-          chunk={chunk}
-          onToggleReviewed={() => onToggleReviewed(chunk.id)}
-          onAddComment={(body) => onAddComment(chunk.id, body)}
-          onUpdateComment={onUpdateComment}
-          onDeleteComment={onDeleteComment}
-          onPublishComment={onPublishComment}
-        />
-      ))}
-    </div>
+    <ChunkBlock
+      chunk={row.chunk}
+      onToggleReviewed={() => onToggleReviewed(row.chunk.id)}
+      onAddComment={(body) => onAddComment(row.chunk.id, body)}
+      onUpdateComment={onUpdateComment}
+      onDeleteComment={onDeleteComment}
+      onPublishComment={onPublishComment}
+    />
   );
 }
 
@@ -242,7 +263,10 @@ export function DiffViewer({
   onDeleteComment,
   onPublishComment,
 }: DiffViewerProps): React.ReactElement {
-  const fileGroups = useMemo((): FileGroup[] => {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  // Build file groups then flatten into virtual rows
+  const rows = useMemo((): VirtualRow[] => {
     const map = new Map<string, ChunkWithDetails[]>();
     for (const chunk of chunks) {
       const existing = map.get(chunk.filePath);
@@ -252,25 +276,79 @@ export function DiffViewer({
         map.set(chunk.filePath, [chunk]);
       }
     }
-    return Array.from(map.entries()).map(([filePath, fileChunks]) => ({
-      filePath,
-      chunks: fileChunks.sort((a, b) => a.chunkIndex - b.chunkIndex),
-    }));
+
+    const result: VirtualRow[] = [];
+    for (const [filePath, fileChunks] of map) {
+      const sorted = fileChunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+      result.push({
+        type: 'file-header',
+        filePath,
+        chunkCount: sorted.length,
+        allReviewed: sorted.every((c) => c.reviewed),
+      });
+      for (const chunk of sorted) {
+        result.push({ type: 'chunk', chunk });
+      }
+    }
+    return result;
   }, [chunks]);
 
+  // Estimate row height: file headers are ~36px, reviewed chunks ~32px,
+  // unreviewed chunks vary by diff line count
+  const estimateSize = useCallback(
+    (index: number): number => {
+      const row = rows[index];
+      if (row.type === 'file-header') return 36;
+      const chunk = row.chunk;
+      if (chunk.reviewed) return 32;
+      const lineCount = chunk.diffText.split('\n').length;
+      // ~20px per diff line + 32px header + 40px comment area + optional note
+      const noteHeight = chunk.metadata?.reviewNote ? 28 : 0;
+      return 32 + noteHeight + lineCount * 20 + 40;
+    },
+    [rows],
+  );
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize,
+    overscan: 5,
+  });
+
   return (
-    <div className="pb-8">
-      {fileGroups.map((file) => (
-        <FileSection
-          key={file.filePath}
-          file={file}
-          onToggleReviewed={onToggleReviewed}
-          onAddComment={onAddComment}
-          onUpdateComment={onUpdateComment}
-          onDeleteComment={onDeleteComment}
-          onPublishComment={onPublishComment}
-        />
-      ))}
+    <div ref={parentRef} className="h-full overflow-y-auto">
+      <div
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          width: '100%',
+          position: 'relative',
+        }}
+      >
+        {virtualizer.getVirtualItems().map((virtualRow) => (
+          <div
+            key={virtualRow.key}
+            data-index={virtualRow.index}
+            ref={virtualizer.measureElement}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              transform: `translateY(${virtualRow.start}px)`,
+            }}
+          >
+            <VirtualRowRenderer
+              row={rows[virtualRow.index]}
+              onToggleReviewed={onToggleReviewed}
+              onAddComment={onAddComment}
+              onUpdateComment={onUpdateComment}
+              onDeleteComment={onDeleteComment}
+              onPublishComment={onPublishComment}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
