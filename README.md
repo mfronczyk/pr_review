@@ -12,11 +12,12 @@
 
 A sample PR Review session in the app:
 
-![Screenshot of PR Review app interface](assets/README_screenshot.png)
+![Screenshot of PR Review app interface](/assets/README_screenshot.png)
 
 ## Table of Contents
 
 - [pr-review](#pr-review)
+  - [Screenshot](#screenshot)
   - [Table of Contents](#table-of-contents)
   - [Project Structure](#project-structure)
   - [Prerequisites](#prerequisites)
