@@ -553,13 +553,18 @@ export function ReviewPage(): React.ReactElement {
     return Array.from(map.values()).sort((a, b) => b.chunks.length - a.chunks.length);
   }, [chunks, tags]);
 
-  // Get unique file list
+  // Get unique file list — scoped to the active tag filter so the sidebar
+  // only shows files that contain chunks from the selected group.
   const files = useMemo((): string[] => {
     if (!chunks) return [];
+    let source = chunks;
+    if (activeFilter?.type === 'tag') {
+      source = chunks.filter((c) => c.tags.some((t) => t.name === activeFilter.value));
+    }
     const seen = new Set<string>();
-    for (const c of chunks) seen.add(c.filePath);
+    for (const c of source) seen.add(c.filePath);
     return Array.from(seen).sort();
-  }, [chunks]);
+  }, [chunks, activeFilter]);
 
   // Derive PR progress from local chunks state — avoids refetching PR on every toggle
   const prWithLocalProgress = useMemo((): PrWithProgress | null => {
