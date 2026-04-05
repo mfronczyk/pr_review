@@ -1,0 +1,25 @@
+{
+  "name": "pr-review",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/shared", "packages/server", "packages/client"],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "dev": "concurrently -n server,client -c blue,green \"npm run dev -w packages/server\" \"npm run dev -w packages/client\"",
+    "lint": "biome check .",
+    "lint:fix": "biome check --fix .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "concurrently": "^9.2.1",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
