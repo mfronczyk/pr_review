@@ -433,6 +433,8 @@ function Toolbar({
   analyzing,
   unpublishedCount,
   modelLabel,
+  additions,
+  deletions,
 }: {
   hideApproved: boolean;
   onToggleHideApproved: () => void;
@@ -446,6 +448,8 @@ function Toolbar({
   analyzing: boolean;
   unpublishedCount: number;
   modelLabel: string | null;
+  additions: number;
+  deletions: number;
 }): React.ReactElement {
   const [publishing, setPublishing] = useState(false);
 
@@ -479,6 +483,10 @@ function Toolbar({
           />
           Show unresolved
         </label>
+        <span className="text-xs font-mono">
+          <span className="text-green-600 dark:text-green-400">+{additions}</span>{' '}
+          <span className="text-red-600 dark:text-red-400">-{deletions}</span>
+        </span>
       </div>
       <div className="flex items-center gap-2">
         {unpublishedCount > 0 && (
@@ -983,6 +991,8 @@ export function ReviewPage(): React.ReactElement {
           analyzing={analyzing}
           unpublishedCount={unpublishedCount}
           modelLabel={modelLabel}
+          additions={prWithLocalProgress.additions}
+          deletions={prWithLocalProgress.deletions}
         />
 
         {activeGroupSummary && (

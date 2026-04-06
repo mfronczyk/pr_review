@@ -129,6 +129,28 @@ export class ChunkService {
   }
 
   /**
+   * Get total additions and deletions for a PR by scanning chunk diff text.
+   */
+  getDiffStats(prId: number): { additions: number; deletions: number } {
+    const rows = this.db
+      .prepare('SELECT diff_text FROM chunks WHERE pr_id = ?')
+      .all(prId) as Array<{ diff_text: string }>;
+
+    let additions = 0;
+    let deletions = 0;
+    for (const row of rows) {
+      for (const line of row.diff_text.split('\n')) {
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          additions++;
+        } else if (line.startsWith('-') && !line.startsWith('---')) {
+          deletions++;
+        }
+      }
+    }
+    return { additions, deletions };
+  }
+
+  /**
    * Add tags to a chunk.
    */
   addTagsToChunk(chunkId: number, tagIds: number[]): void {

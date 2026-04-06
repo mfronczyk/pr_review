@@ -169,6 +169,8 @@ export interface AddPrRequest {
 export interface PrWithProgress extends PullRequest {
   totalChunks: number;
   approvedChunks: number;
+  additions: number;
+  deletions: number;
 }
 
 export interface ChunkWithDetails extends Chunk {

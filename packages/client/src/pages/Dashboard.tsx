@@ -155,7 +155,11 @@ function PrRow({
             <h3 className="mt-1 truncate text-sm font-medium text-fg-primary">{pr.title}</h3>
             <p className="mt-1 text-xs text-fg-muted">by {pr.author}</p>
           </div>
-          <div className="flex-shrink-0">
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <span className="text-xs font-mono">
+              <span className="text-green-600 dark:text-green-400">+{pr.additions}</span>{' '}
+              <span className="text-red-600 dark:text-red-400">-{pr.deletions}</span>
+            </span>
             <ProgressBar approved={pr.approvedChunks} total={pr.totalChunks} />
           </div>
         </div>

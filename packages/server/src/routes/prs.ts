@@ -32,10 +32,13 @@ export function createPrRoutes(
       const prs = prService.listPrs();
       const result: PrWithProgress[] = prs.map((pr) => {
         const chunks = chunkService.getChunksForPr(pr.id);
+        const { additions, deletions } = chunkService.getDiffStats(pr.id);
         return {
           ...pr,
           totalChunks: chunks.length,
           approvedChunks: chunks.filter((c) => c.approved).length,
+          additions,
+          deletions,
         };
       });
       res.json(result);
@@ -78,10 +81,13 @@ export function createPrRoutes(
         return;
       }
       const chunks = chunkService.getChunksForPr(pr.id);
+      const { additions, deletions } = chunkService.getDiffStats(pr.id);
       const result: PrWithProgress = {
         ...pr,
         totalChunks: chunks.length,
         approvedChunks: chunks.filter((c) => c.approved).length,
+        additions,
+        deletions,
       };
       res.json(result);
     } catch (error) {
