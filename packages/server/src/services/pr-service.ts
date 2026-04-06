@@ -88,6 +88,10 @@ export class PrService {
     // 4. Fetch PR branch and compute diff
     await this.fetchAndStoreDiff(pr);
 
+    // 5. Import existing GitHub review comments
+    const commentService = new CommentService({ db: this.db });
+    await commentService.importGitHubComments(pr.id, owner, repo, prNumber, ghHost);
+
     return mapPrRow(pr);
   }
 
