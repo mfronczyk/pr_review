@@ -585,6 +585,23 @@ export const DiffViewer = memo(function DiffViewer({
         allApproved: sorted.every((c) => c.approved),
       });
     }
+    // Sort file groups: directories before files at each level, alphabetical within.
+    // This matches the sidebar file tree ordering and GitHub's diff view.
+    result.sort((a, b) => {
+      const aParts = a.filePath.split('/');
+      const bParts = b.filePath.split('/');
+      const minLen = Math.min(aParts.length, bParts.length);
+      for (let i = 0; i < minLen; i++) {
+        const aIsLast = i === aParts.length - 1;
+        const bIsLast = i === bParts.length - 1;
+        // If one is a file and the other is a directory at this level,
+        // the directory (deeper path) comes first
+        if (aIsLast !== bIsLast) return aIsLast ? 1 : -1;
+        const cmp = aParts[i].localeCompare(bParts[i]);
+        if (cmp !== 0) return cmp;
+      }
+      return aParts.length - bParts.length;
+    });
     return result;
   }, [chunks]);
 

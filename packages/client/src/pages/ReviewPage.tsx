@@ -163,6 +163,18 @@ function collapseTree(node: TreeNode): TreeNode {
   return { ...node, children: collapsed };
 }
 
+/**
+ * Sort tree nodes: directories before files, alphabetical within each group.
+ * A collapsed node like "components/Foo.tsx" (isFile but name contains "/")
+ * is treated as a directory for sorting purposes.
+ */
+function sortTreeNodes(a: TreeNode, b: TreeNode): number {
+  const aIsDir = !a.isFile || a.name.includes('/');
+  const bIsDir = !b.isFile || b.name.includes('/');
+  if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
+  return a.name.localeCompare(b.name);
+}
+
 function FileTreeNode({
   node,
   depth,
@@ -198,11 +210,7 @@ function FileTreeNode({
     );
   }
 
-  const sortedChildren = Array.from(node.children.values()).sort((a, b) => {
-    // Directories first, then files
-    if (a.isFile !== b.isFile) return a.isFile ? 1 : -1;
-    return a.name.localeCompare(b.name);
-  });
+  const sortedChildren = Array.from(node.children.values()).sort(sortTreeNodes);
 
   return (
     <div>
@@ -272,11 +280,7 @@ const Sidebar = memo(function Sidebar({
   }
 
   const sortedRootChildren = useMemo(
-    () =>
-      Array.from(fileTree.children.values()).sort((a, b) => {
-        if (a.isFile !== b.isFile) return a.isFile ? 1 : -1;
-        return a.name.localeCompare(b.name);
-      }),
+    () => Array.from(fileTree.children.values()).sort(sortTreeNodes),
     [fileTree],
   );
 
