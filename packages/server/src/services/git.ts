@@ -58,13 +58,14 @@ export class GitService {
    * Compute the diff between the PR branch and its base.
    * Uses the three-dot diff (base...head) to show only changes
    * introduced by the PR, not changes in the base branch.
+   * Enables rename detection (-M) and ignores whitespace at end of line.
    *
    * @param baseRef - The base branch ref (e.g. 'origin/main')
    * @param headRef - The PR branch ref (e.g. 'pr-7272')
    * @returns Raw unified diff string
    */
   async diff(baseRef: string, headRef: string): Promise<string> {
-    return this.git('diff', `${baseRef}...${headRef}`);
+    return this.git('diff', '-M', '--ignore-space-at-eol', `${baseRef}...${headRef}`);
   }
 
   /**

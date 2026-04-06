@@ -51,7 +51,7 @@ describe('GitService', () => {
   });
 
   describe('diff', () => {
-    it('should run git diff with three-dot notation', async () => {
+    it('should run git diff with rename detection and ignore whitespace at eol', async () => {
       mockExecFile.mockResolvedValue({ stdout: 'diff output here', stderr: '' } as never);
 
       const result = await git.diff('origin/main', 'pr-7272');
@@ -59,7 +59,7 @@ describe('GitService', () => {
       expect(result).toBe('diff output here');
       expect(mockExecFile).toHaveBeenCalledWith(
         'git',
-        ['diff', 'origin/main...pr-7272'],
+        ['diff', '-M', '--ignore-space-at-eol', 'origin/main...pr-7272'],
         expect.objectContaining({ cwd: '/tmp/test-repo' }),
       );
     });
