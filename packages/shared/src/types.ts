@@ -95,6 +95,7 @@ export interface Comment {
   parentId: number | null;
   author: string | null;
   ghCommentId: number | null;
+  ghNodeId: string | null;
   resolved: boolean;
   createdAt: string;
   publishedAt: string | null;

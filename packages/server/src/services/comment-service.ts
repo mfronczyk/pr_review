@@ -96,8 +96,9 @@ export class CommentService {
 
   /**
    * Resolve a thread (set resolved = 1 on the root comment).
+   * If the comment has been published to GitHub, also resolves the thread on GitHub.
    */
-  resolveThread(commentId: number): Comment {
+  async resolveThread(commentId: number): Promise<Comment> {
     const row = this.db.prepare('SELECT * FROM comments WHERE id = ?').get(commentId) as
       | CommentDbRow
       | undefined;
@@ -106,6 +107,12 @@ export class CommentService {
       throw new Error('Can only resolve root comments (thread roots)');
     }
     this.db.prepare('UPDATE comments SET resolved = 1 WHERE id = ?').run(commentId);
+
+    // Sync resolution to GitHub if the comment has a node ID
+    if (row.gh_node_id) {
+      await this.syncThreadResolution(row.gh_node_id, row.pr_id, 'resolve');
+    }
+
     const updated = this.db
       .prepare('SELECT * FROM comments WHERE id = ?')
       .get(commentId) as CommentDbRow;
@@ -114,8 +121,9 @@ export class CommentService {
 
   /**
    * Unresolve a thread (set resolved = 0 on the root comment).
+   * If the comment has been published to GitHub, also unresolves the thread on GitHub.
    */
-  unresolveThread(commentId: number): Comment {
+  async unresolveThread(commentId: number): Promise<Comment> {
     const row = this.db.prepare('SELECT * FROM comments WHERE id = ?').get(commentId) as
       | CommentDbRow
       | undefined;
@@ -124,10 +132,94 @@ export class CommentService {
       throw new Error('Can only unresolve root comments (thread roots)');
     }
     this.db.prepare('UPDATE comments SET resolved = 0 WHERE id = ?').run(commentId);
+
+    // Sync resolution to GitHub if the comment has a node ID
+    if (row.gh_node_id) {
+      await this.syncThreadResolution(row.gh_node_id, row.pr_id, 'unresolve');
+    }
+
     const updated = this.db
       .prepare('SELECT * FROM comments WHERE id = ?')
       .get(commentId) as CommentDbRow;
     return mapCommentRow(updated);
+  }
+
+  /**
+   * Sync thread resolution state to GitHub via GraphQL.
+   * Queries the PR's review threads to find the one containing the given comment,
+   * then calls resolveReviewThread or unresolveReviewThread.
+   */
+  private async syncThreadResolution(
+    commentNodeId: string,
+    prId: number,
+    action: 'resolve' | 'unresolve',
+  ): Promise<void> {
+    const pr = this.db
+      .prepare('SELECT owner, repo, number, gh_host FROM prs WHERE id = ?')
+      .get(prId) as { owner: string; repo: string; number: number; gh_host: string } | undefined;
+    if (!pr) return;
+
+    const octokit = await getOctokit(pr.gh_host);
+
+    // Query the PR's review threads to find the one containing our comment
+    const result = await octokit.graphql<{
+      repository: {
+        pullRequest: {
+          reviewThreads: {
+            nodes: Array<{
+              id: string;
+              comments: { nodes: Array<{ id: string }> };
+            }>;
+          };
+        };
+      };
+    }>(
+      `query($owner: String!, $repo: String!, $prNumber: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $prNumber) {
+            reviewThreads(first: 100) {
+              nodes {
+                id
+                comments(first: 1) {
+                  nodes { id }
+                }
+              }
+            }
+          }
+        }
+      }`,
+      { owner: pr.owner, repo: pr.repo, prNumber: pr.number },
+    );
+
+    const threads = result.repository.pullRequest.reviewThreads.nodes;
+    const thread = threads.find((t) => t.comments.nodes.some((c) => c.id === commentNodeId));
+
+    if (!thread) {
+      console.warn(
+        `[comments] Could not find GitHub thread for comment node ${commentNodeId}, skipping sync`,
+      );
+      return;
+    }
+
+    if (action === 'resolve') {
+      await octokit.graphql(
+        `mutation($threadId: ID!) {
+          resolveReviewThread(input: { threadId: $threadId }) {
+            thread { id isResolved }
+          }
+        }`,
+        { threadId: thread.id },
+      );
+    } else {
+      await octokit.graphql(
+        `mutation($threadId: ID!) {
+          unresolveReviewThread(input: { threadId: $threadId }) {
+            thread { id isResolved }
+          }
+        }`,
+        { threadId: thread.id },
+      );
+    }
   }
 
   /**
@@ -172,9 +264,10 @@ export class CommentService {
 
       this.db
         .prepare(
-          "UPDATE comments SET gh_comment_id = ?, published_at = datetime('now') WHERE id = ?",
+          `UPDATE comments SET gh_comment_id = ?, gh_node_id = ?, published_at = datetime('now')
+           WHERE id = ?`,
         )
-        .run(ghComment.id, commentId);
+        .run(ghComment.id, ghComment.node_id, commentId);
     } else {
       // Root comment — anchor to file line
       const chunk = this.db.prepare('SELECT * FROM chunks WHERE id = ?').get(comment.chunk_id) as
@@ -195,9 +288,10 @@ export class CommentService {
 
       this.db
         .prepare(
-          "UPDATE comments SET gh_comment_id = ?, published_at = datetime('now') WHERE id = ?",
+          `UPDATE comments SET gh_comment_id = ?, gh_node_id = ?, published_at = datetime('now')
+           WHERE id = ?`,
         )
-        .run(ghComment.id, commentId);
+        .run(ghComment.id, ghComment.node_id, commentId);
     }
 
     const updated = this.db
@@ -311,8 +405,8 @@ export class CommentService {
 
       const row = this.db
         .prepare(
-          `INSERT INTO comments (chunk_id, pr_id, body, line, parent_id, author, gh_comment_id, published_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO comments (chunk_id, pr_id, body, line, parent_id, author, gh_comment_id, gh_node_id, published_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`,
         )
         .get(
@@ -323,6 +417,7 @@ export class CommentService {
           parentId,
           ghComment.user?.login ?? 'unknown',
           ghComment.id,
+          ghComment.node_id,
           ghComment.created_at,
           ghComment.created_at,
         ) as CommentDbRow;
@@ -332,7 +427,83 @@ export class CommentService {
       imported++;
     }
 
+    // Sync thread resolution state from GitHub
+    await this.syncResolutionStateFromGitHub(prId, owner, repo, prNumber, octokit);
+
     return imported;
+  }
+
+  /**
+   * Fetch thread resolution state from GitHub via GraphQL and update local comments.
+   * Matches threads to local root comments by comparing the first comment's node_id.
+   */
+  private async syncResolutionStateFromGitHub(
+    prId: number,
+    owner: string,
+    repo: string,
+    prNumber: number,
+    octokit: Awaited<ReturnType<typeof getOctokit>>,
+  ): Promise<void> {
+    // Get local root comments that have a gh_node_id
+    const localRoots = this.db
+      .prepare(
+        'SELECT id, gh_node_id, resolved FROM comments WHERE pr_id = ? AND parent_id IS NULL AND gh_node_id IS NOT NULL',
+      )
+      .all(prId) as Array<{ id: number; gh_node_id: string; resolved: number }>;
+
+    if (localRoots.length === 0) return;
+
+    const localByNodeId = new Map<string, { id: number; resolved: number }>();
+    for (const root of localRoots) {
+      localByNodeId.set(root.gh_node_id, { id: root.id, resolved: root.resolved });
+    }
+
+    // Fetch thread resolution state from GitHub
+    const result = await octokit.graphql<{
+      repository: {
+        pullRequest: {
+          reviewThreads: {
+            nodes: Array<{
+              isResolved: boolean;
+              comments: { nodes: Array<{ id: string }> };
+            }>;
+          };
+        };
+      };
+    }>(
+      `query($owner: String!, $repo: String!, $prNumber: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $prNumber) {
+            reviewThreads(first: 100) {
+              nodes {
+                isResolved
+                comments(first: 1) {
+                  nodes { id }
+                }
+              }
+            }
+          }
+        }
+      }`,
+      { owner, repo, prNumber },
+    );
+
+    const threads = result.repository.pullRequest.reviewThreads.nodes;
+
+    const updateResolved = this.db.prepare('UPDATE comments SET resolved = ? WHERE id = ?');
+
+    for (const thread of threads) {
+      const firstComment = thread.comments.nodes[0];
+      if (!firstComment) continue;
+
+      const local = localByNodeId.get(firstComment.id);
+      if (!local) continue;
+
+      const ghResolved = thread.isResolved ? 1 : 0;
+      if (local.resolved !== ghResolved) {
+        updateResolved.run(ghResolved, local.id);
+      }
+    }
   }
 }
 
@@ -347,6 +518,7 @@ interface CommentDbRow {
   parent_id: number | null;
   author: string | null;
   gh_comment_id: number | null;
+  gh_node_id: string | null;
   resolved: number;
   created_at: string;
   published_at: string | null;
@@ -364,6 +536,7 @@ function mapCommentRow(row: CommentDbRow): Comment {
     parentId: row.parent_id,
     author: row.author,
     ghCommentId: row.gh_comment_id,
+    ghNodeId: row.gh_node_id,
     resolved: Boolean(row.resolved),
     createdAt: row.created_at,
     publishedAt: row.published_at,

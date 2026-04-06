@@ -147,38 +147,42 @@ describe('CommentService', () => {
   });
 
   describe('resolveThread', () => {
-    it('should resolve a root comment', () => {
+    it('should resolve a root comment', async () => {
       const root = service.createComment(chunkId, prId, 'Root', 12);
       expect(root.resolved).toBe(false);
 
-      const resolved = service.resolveThread(root.id);
+      const resolved = await service.resolveThread(root.id);
       expect(resolved.resolved).toBe(true);
     });
 
-    it('should throw when resolving a reply', () => {
+    it('should throw when resolving a reply', async () => {
       const root = service.createComment(chunkId, prId, 'Root', 12);
       const reply = service.createComment(chunkId, prId, 'Reply', 12, root.id);
-      expect(() => service.resolveThread(reply.id)).toThrow('Can only resolve root comments');
+      await expect(() => service.resolveThread(reply.id)).rejects.toThrow(
+        'Can only resolve root comments',
+      );
     });
 
-    it('should throw for nonexistent comment', () => {
-      expect(() => service.resolveThread(999)).toThrow('Comment not found');
+    it('should throw for nonexistent comment', async () => {
+      await expect(() => service.resolveThread(999)).rejects.toThrow('Comment not found');
     });
   });
 
   describe('unresolveThread', () => {
-    it('should unresolve a resolved thread', () => {
+    it('should unresolve a resolved thread', async () => {
       const root = service.createComment(chunkId, prId, 'Root', 12);
-      service.resolveThread(root.id);
+      await service.resolveThread(root.id);
 
-      const unresolved = service.unresolveThread(root.id);
+      const unresolved = await service.unresolveThread(root.id);
       expect(unresolved.resolved).toBe(false);
     });
 
-    it('should throw when unresolving a reply', () => {
+    it('should throw when unresolving a reply', async () => {
       const root = service.createComment(chunkId, prId, 'Root', 12);
       const reply = service.createComment(chunkId, prId, 'Reply', 12, root.id);
-      expect(() => service.unresolveThread(reply.id)).toThrow('Can only unresolve root comments');
+      await expect(() => service.unresolveThread(reply.id)).rejects.toThrow(
+        'Can only unresolve root comments',
+      );
     });
   });
 });

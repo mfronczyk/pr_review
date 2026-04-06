@@ -353,7 +353,9 @@ function DiffLine({
           dangerouslySetInnerHTML={{ __html: highlightedHtml || '&nbsp;' }}
         />
       ) : (
-        <code className={`flex-1 whitespace-pre pr-3 text-xs leading-5 ${text}`}>{parsed.content || ' '}</code>
+        <code className={`flex-1 whitespace-pre pr-3 text-xs leading-5 ${text}`}>
+          {parsed.content || ' '}
+        </code>
       )}
     </div>
   );

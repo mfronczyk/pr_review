@@ -24,6 +24,7 @@ export function initDatabase(dbPath: string): Database.Database {
   db.pragma('foreign_keys = ON');
 
   createTables(db);
+  runMigrations(db);
   seedDefaultTags(db);
 
   return db;
@@ -93,6 +94,7 @@ function createTables(db: Database.Database): void {
       parent_id     INTEGER REFERENCES comments(id) ON DELETE CASCADE,
       author        TEXT,
       gh_comment_id INTEGER,
+      gh_node_id    TEXT,
       resolved      INTEGER NOT NULL DEFAULT 0,
       created_at    TEXT NOT NULL DEFAULT (datetime('now')),
       published_at  TEXT
@@ -126,6 +128,19 @@ function createTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_llm_runs_pr_id ON llm_runs(pr_id);
     CREATE INDEX IF NOT EXISTS idx_tag_summaries_pr_id ON tag_summaries(pr_id);
   `);
+}
+
+/**
+ * Run schema migrations for existing databases.
+ * Each migration checks whether the change has already been applied.
+ */
+function runMigrations(db: Database.Database): void {
+  // Migration: add gh_node_id column to comments table
+  const cols = db.pragma('table_info(comments)') as Array<{ name: string }>;
+  const hasGhNodeId = cols.some((c) => c.name === 'gh_node_id');
+  if (!hasGhNodeId) {
+    db.exec('ALTER TABLE comments ADD COLUMN gh_node_id TEXT');
+  }
 }
 
 const DEFAULT_TAGS: Array<{ name: string; description: string; color: string }> = [
