@@ -11,6 +11,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { InlineThread, NewCommentForm } from '@/components/InlineComment';
+import { highlightLines } from '@/highlight';
 import type { ChunkWithDetails, Comment, CommentThread } from '@pr-review/shared';
 
 // ── Types ───────────────────────────────────────────────────
@@ -177,8 +178,11 @@ function ReviewNote({ note }: { note: string }): React.ReactElement {
 // ── Line Number Parsing ─────────────────────────────────────
 
 interface ParsedDiffLine {
-  type: 'context' | 'add' | 'del' | 'hunk-header' | 'empty';
-  text: string;
+  type: 'context' | 'add' | 'del' | 'hunk-header';
+  /** The line content without the diff prefix (+/-/space). */
+  content: string;
+  /** The diff prefix character: '+', '-', ' ', or '' for hunk headers. */
+  prefix: string;
   oldLineNum: number | null;
   newLineNum: number | null;
 }
@@ -201,21 +205,80 @@ function parseDiffLines(diffText: string): ParsedDiffLine[] {
         oldLine = Number.parseInt(match[1], 10);
         newLine = Number.parseInt(match[2], 10);
       }
-      result.push({ type: 'hunk-header', text: line, oldLineNum: null, newLineNum: null });
+      result.push({
+        type: 'hunk-header',
+        content: line,
+        prefix: '',
+        oldLineNum: null,
+        newLineNum: null,
+      });
     } else if (line.startsWith('+')) {
-      result.push({ type: 'add', text: line, oldLineNum: null, newLineNum: newLine });
+      result.push({
+        type: 'add',
+        content: line.slice(1),
+        prefix: '+',
+        oldLineNum: null,
+        newLineNum: newLine,
+      });
       newLine++;
     } else if (line.startsWith('-')) {
-      result.push({ type: 'del', text: line, oldLineNum: oldLine, newLineNum: null });
+      result.push({
+        type: 'del',
+        content: line.slice(1),
+        prefix: '-',
+        oldLineNum: oldLine,
+        newLineNum: null,
+      });
       oldLine++;
-    } else if (line === '') {
-      // Trailing empty line at end of chunk
-      result.push({ type: 'empty', text: '', oldLineNum: null, newLineNum: null });
-    } else {
-      // Context line (starts with space or is plain text)
-      result.push({ type: 'context', text: line, oldLineNum: oldLine, newLineNum: newLine });
+    } else if (line.startsWith(' ')) {
+      // Context line with explicit space prefix
+      result.push({
+        type: 'context',
+        content: line.slice(1),
+        prefix: ' ',
+        oldLineNum: oldLine,
+        newLineNum: newLine,
+      });
       oldLine++;
       newLine++;
+    } else if (line === '') {
+      // Blank line in source code (git sometimes omits the leading space)
+      result.push({
+        type: 'context',
+        content: '',
+        prefix: ' ',
+        oldLineNum: oldLine,
+        newLineNum: newLine,
+      });
+      oldLine++;
+      newLine++;
+    } else {
+      // Other content (shouldn't happen in well-formed diffs)
+      result.push({
+        type: 'context',
+        content: line,
+        prefix: ' ',
+        oldLineNum: oldLine,
+        newLineNum: newLine,
+      });
+      oldLine++;
+      newLine++;
+    }
+  }
+
+  // Remove trailing empty context lines (artifact of splitting on trailing \n)
+  while (
+    result.length > 0 &&
+    result[result.length - 1].type === 'context' &&
+    result[result.length - 1].content === '' &&
+    result[result.length - 1].prefix === ' '
+  ) {
+    // Only pop if it's the very last line (trailing newline artifact)
+    const last = result[result.length - 1];
+    if (last.oldLineNum != null && last.newLineNum != null) {
+      result.pop();
+    } else {
+      break;
     }
   }
 
@@ -229,7 +292,6 @@ const lineStyles: Record<ParsedDiffLine['type'], { bg: string; text: string }> =
   del: { bg: 'bg-diff-del-bg', text: 'text-diff-del-fg' },
   'hunk-header': { bg: 'bg-diff-info-bg/30', text: 'text-diff-info-fg' },
   context: { bg: '', text: 'text-fg-secondary' },
-  empty: { bg: '', text: 'text-fg-secondary' },
 };
 
 const gutterStyles: Record<ParsedDiffLine['type'], string> = {
@@ -237,19 +299,20 @@ const gutterStyles: Record<ParsedDiffLine['type'], string> = {
   del: 'bg-diff-del-gutter text-diff-del-fg/60',
   'hunk-header': 'bg-diff-info-bg/30 text-diff-info-fg/50',
   context: 'text-fg-muted',
-  empty: 'text-fg-muted',
 };
 
 function DiffLine({
   parsed,
+  highlightedHtml,
   onClickAdd,
 }: {
   parsed: ParsedDiffLine;
+  highlightedHtml: string | null;
   onClickAdd?: () => void;
 }): React.ReactElement {
   const { bg, text } = lineStyles[parsed.type];
   const gutter = gutterStyles[parsed.type];
-  const canComment = parsed.type !== 'hunk-header' && parsed.type !== 'empty';
+  const canComment = parsed.type !== 'hunk-header';
 
   return (
     <div className={`group/line relative flex ${bg}`}>
@@ -276,8 +339,22 @@ function DiffLine({
       >
         {parsed.newLineNum ?? ''}
       </span>
+      {/* Diff prefix (+/-/space) — fixed width so code stays aligned */}
+      <span
+        className={`inline-block w-5 flex-shrink-0 select-none pl-1 font-mono text-xs leading-5 ${text}`}
+      >
+        {parsed.prefix}
+      </span>
       {/* Code content */}
-      <code className={`flex-1 px-3 text-xs leading-5 ${text}`}>{parsed.text || ' '}</code>
+      {highlightedHtml != null ? (
+        <code
+          className={`hljs flex-1 pr-3 text-xs leading-5 ${parsed.type === 'hunk-header' ? text : ''}`}
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: highlight.js output is trusted
+          dangerouslySetInnerHTML={{ __html: highlightedHtml || '&nbsp;' }}
+        />
+      ) : (
+        <code className={`flex-1 pr-3 text-xs leading-5 ${text}`}>{parsed.content || ' '}</code>
+      )}
     </div>
   );
 }
@@ -308,6 +385,16 @@ function ChunkBlock({
   isLast: boolean;
 }): React.ReactElement {
   const parsedLines = useMemo(() => parseDiffLines(chunk.diffText), [chunk.diffText]);
+
+  // Compute syntax-highlighted HTML for each line.
+  // We highlight all code lines together (preserving multi-line token state)
+  // and then map the results back to each parsed line.
+  const highlightedHtmlLines = useMemo((): (string | null)[] => {
+    const codeLines = parsedLines.map((p) => (p.type === 'hunk-header' ? '' : p.content));
+    const highlighted = highlightLines(chunk.filePath, codeLines);
+    return parsedLines.map((p, i) => (p.type === 'hunk-header' ? null : highlighted[i]));
+  }, [parsedLines, chunk.filePath]);
+
   // Track which diff line index the comment form is open for (null = closed).
   // We use the array index (not line number) because multiple diff lines can
   // share the same line number (e.g. a deletion followed by an addition).
@@ -354,10 +441,9 @@ function ChunkBlock({
                 <div className={dimClass}>
                   <DiffLine
                     parsed={parsed}
+                    highlightedHtml={highlightedHtmlLines[i]}
                     onClickAdd={
-                      parsed.type !== 'hunk-header' && parsed.type !== 'empty'
-                        ? () => setCommentFormIndex(i)
-                        : undefined
+                      parsed.type !== 'hunk-header' ? () => setCommentFormIndex(i) : undefined
                     }
                   />
                 </div>
