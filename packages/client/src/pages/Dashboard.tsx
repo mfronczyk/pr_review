@@ -179,6 +179,7 @@ function PrRow({
 
 export function Dashboard(): React.ReactElement {
   const { data: prs, loading, error, reload } = useAsync(() => api.listPrs(), []);
+  const { data: config } = useAsync(() => api.getConfig(), []);
 
   async function handleDelete(id: number): Promise<void> {
     await api.deletePr(id);
@@ -192,6 +193,7 @@ export function Dashboard(): React.ReactElement {
         <p className="text-sm text-fg-tertiary">
           Add a PR to start reviewing. Diffs are fetched from your local git repo.
         </p>
+        {config && <p className="mt-1 text-xs text-fg-muted font-mono">{config.repoPath}</p>}
       </div>
 
       <div className="mb-6">

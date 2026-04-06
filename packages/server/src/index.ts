@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { LlmModelInfo } from '@pr-review/shared';
+import type { LlmModelInfo, ServerConfig } from '@pr-review/shared';
 import type Database from 'better-sqlite3';
 import express from 'express';
 import { initDatabase } from './db/schema.js';
@@ -28,6 +28,12 @@ export function createApp(
   // Health check
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // Server configuration
+  app.get('/api/config', (_req, res) => {
+    const config: ServerConfig = { repoPath };
+    res.json(config);
   });
 
   // LLM model info (cached from startup validation)

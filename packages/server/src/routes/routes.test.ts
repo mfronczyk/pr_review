@@ -62,6 +62,14 @@ describe('GET /api/health', () => {
   });
 });
 
+describe('GET /api/config', () => {
+  it('should return server configuration with repoPath', async () => {
+    const res = await request(app).get('/api/config');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ repoPath: '/tmp/test-repo' });
+  });
+});
+
 describe('GET /api/llm/model', () => {
   it('should return 503 when no model info is available', async () => {
     const res = await request(app).get('/api/llm/model');

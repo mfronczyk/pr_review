@@ -501,7 +501,7 @@ function Toolbar({
           disabled={syncing}
           className="rounded-md border border-border-primary bg-surface-secondary px-3 py-1 text-xs text-fg-secondary hover:bg-surface-tertiary disabled:opacity-50"
         >
-          {syncing ? 'Syncing...' : 'Sync'}
+          {syncing ? 'Fetching...' : 'Fetch Latest'}
         </button>
         <button
           type="button"

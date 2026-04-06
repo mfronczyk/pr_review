@@ -192,3 +192,9 @@ export interface SubmitReviewResponse {
   state: string;
   submittedAt: string;
 }
+
+// ── Server Config ──────────────────────────────────────────
+
+export interface ServerConfig {
+  repoPath: string;
+}

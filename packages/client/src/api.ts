@@ -12,6 +12,7 @@ import type {
   PrWithProgress,
   PullRequest,
   ReviewEvent,
+  ServerConfig,
   SubmitReviewResponse,
   SyncResult,
   Tag,
@@ -38,6 +39,12 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
+}
+
+// ── Server Config ───────────────────────────────────────────
+
+export function getConfig(): Promise<ServerConfig> {
+  return request('/api/config');
 }
 
 // ── PRs ─────────────────────────────────────────────────────
