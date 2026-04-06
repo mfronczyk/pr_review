@@ -154,9 +154,11 @@ function ChunkHeader({
 
 function ReviewNote({ note }: { note: string }): React.ReactElement {
   return (
-    <div className="border-t border-border-secondary bg-diff-note-bg px-3 py-1 text-xs text-diff-note-fg">
-      <span className="mr-1">⚡</span>
-      <Markdown text={note} compact className="inline" />
+    <div className="border-t border-border-secondary px-3 py-1">
+      <div className="max-w-3xl rounded bg-diff-note-bg px-2 py-0.5 text-xs text-diff-note-fg">
+        <span className="mr-1">⚡</span>
+        <Markdown text={note} compact className="inline" />
+      </div>
     </div>
   );
 }
@@ -638,6 +640,7 @@ export const DiffViewer = memo(function DiffViewer({
   onUnresolveThread,
 }: DiffViewerProps): React.ReactElement {
   const parentRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
 
   // Group chunks by file, each group becomes one virtual row (file box)
   const fileGroups = useMemo((): FileGroup[] => {
@@ -703,19 +706,35 @@ export const DiffViewer = memo(function DiffViewer({
     overscan: 3,
   });
 
-  // Scroll to a specific file group when requested
+  // Scroll to top when the set of file groups changes (e.g. switching tag groups)
+  const prevFileGroupsRef = useRef(fileGroups);
+  useEffect(() => {
+    if (prevFileGroupsRef.current !== fileGroups) {
+      prevFileGroupsRef.current = fileGroups;
+      if (parentRef.current) {
+        parentRef.current.scrollTop = 0;
+      }
+    }
+  }, [fileGroups]);
+
+  // Scroll to a specific file group when requested.
+  // We manually calculate the offset to account for the header content above the virtualized area.
   useEffect(() => {
     if (!scrollToFile) return;
     const index = fileGroups.findIndex((g) => g.filePath === scrollToFile);
     if (index >= 0) {
-      virtualizer.scrollToIndex(index, { align: 'start' });
+      const result = virtualizer.getOffsetForIndex(index, 'start');
+      if (result) {
+        const headerOffset = headerRef.current?.offsetHeight ?? 0;
+        virtualizer.scrollToOffset(result[0] + headerOffset);
+      }
     }
     onScrollToFileDone();
   }, [scrollToFile, fileGroups, virtualizer, onScrollToFileDone]);
 
   return (
     <div ref={parentRef} className="h-full overflow-y-auto bg-surface-page p-4">
-      {headerContent}
+      {headerContent && <div ref={headerRef}>{headerContent}</div>}
       <div
         style={{
           height: `${virtualizer.getTotalSize()}px`,

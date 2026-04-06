@@ -1022,7 +1022,7 @@ export function ReviewPage(): React.ReactElement {
               scrollToFile={scrollToFile}
               headerContent={
                 activeSummary ? (
-                  <div className="mb-4 rounded-lg border border-border-secondary bg-surface-secondary px-4 py-2">
+                  <div className="mx-auto mb-4 max-w-3xl rounded-lg border border-border-secondary bg-surface-secondary px-4 py-2">
                     <Markdown text={activeSummary} className="text-xs text-fg-secondary" />
                   </div>
                 ) : undefined
