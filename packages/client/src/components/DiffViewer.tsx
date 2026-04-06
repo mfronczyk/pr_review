@@ -348,12 +348,12 @@ function DiffLine({
       {/* Code content */}
       {highlightedHtml != null ? (
         <code
-          className={`hljs flex-1 pr-3 text-xs leading-5 ${parsed.type === 'hunk-header' ? text : ''}`}
+          className={`hljs flex-1 whitespace-pre pr-3 text-xs leading-5 ${parsed.type === 'hunk-header' ? text : ''}`}
           // biome-ignore lint/security/noDangerouslySetInnerHtml: highlight.js output is trusted
           dangerouslySetInnerHTML={{ __html: highlightedHtml || '&nbsp;' }}
         />
       ) : (
-        <code className={`flex-1 pr-3 text-xs leading-5 ${text}`}>{parsed.content || ' '}</code>
+        <code className={`flex-1 whitespace-pre pr-3 text-xs leading-5 ${text}`}>{parsed.content || ' '}</code>
       )}
     </div>
   );
