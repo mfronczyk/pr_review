@@ -2,6 +2,7 @@ import type {
   LlmAnalysisResult,
   LlmChunkAssignment,
   LlmModelInfo,
+  LlmTagSummary,
   Priority,
 } from '@pr-review/shared';
 import type Database from 'better-sqlite3';
@@ -202,8 +203,28 @@ export const ANALYSIS_SCHEMA = {
         required: ['file_path', 'chunk_index', 'tags', 'priority', 'review_note'],
       },
     },
+    tag_summaries: {
+      type: 'array',
+      description:
+        'A contextual summary for each tag group, explaining how the chunks assigned to that tag relate to each other and what they accomplish in this PR.',
+      items: {
+        type: 'object',
+        properties: {
+          tag: {
+            type: 'string',
+            description: 'Tag name (must match a tag used in chunk_assignments)',
+          },
+          summary: {
+            type: 'string',
+            description:
+              'A concise 1-2 sentence contextual summary of what the chunks in this tag group accomplish together in this PR.',
+          },
+        },
+        required: ['tag', 'summary'],
+      },
+    },
   },
-  required: ['pr_summary', 'suggested_tags', 'chunk_assignments'],
+  required: ['pr_summary', 'suggested_tags', 'chunk_assignments', 'tag_summaries'],
 } as const;
 
 /**
@@ -259,6 +280,7 @@ ${diffContent}
    - One or more tags (from defaults + your suggestions)
    - A priority (high/medium/low) based on review importance
    - A review_note ONLY for high-priority chunks or chunks needing special attention (null otherwise)
+4. For EACH tag that you assigned to at least one chunk, write a contextual summary (1-2 sentences) explaining what the chunks in that tag group accomplish together in this specific PR. Focus on the "what and why" — e.g. "These 3 chunks add input validation to the user registration flow to prevent SQL injection."
 
 Be precise with file_path and chunk_index — they must match exactly.`;
 }
@@ -360,8 +382,11 @@ export async function analyzePr(
       // Store chunk metadata
       storeChunkMetadata(db, prId, run.id, result.chunkAssignments);
 
+      // Store tag summaries
+      storeTagSummaries(db, prId, run.id, result.tagSummaries);
+
       console.log(
-        `[analyze] Done: ${result.chunkAssignments.length} chunks tagged, ${result.suggestedTags.length} custom tags`,
+        `[analyze] Done: ${result.chunkAssignments.length} chunks tagged, ${result.suggestedTags.length} custom tags, ${result.tagSummaries.length} tag summaries`,
       );
 
       return result;
@@ -395,6 +420,10 @@ interface RawAnalysisResult {
     priority: string;
     review_note: string | null;
   }>;
+  tag_summaries: Array<{
+    tag: string;
+    summary: string;
+  }>;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -413,6 +442,10 @@ function mapAnalysisResult(raw: RawAnalysisResult): LlmAnalysisResult {
       tags: a.tags,
       priority: validatePriority(a.priority),
       reviewNote: a.review_note,
+    })),
+    tagSummaries: (raw.tag_summaries ?? []).map((ts) => ({
+      tag: ts.tag,
+      summary: ts.summary,
     })),
   };
 }
@@ -482,6 +515,41 @@ function storeChunkMetadata(
 
         insertChunkTag.run(chunk.id, tag.id);
       }
+    }
+  });
+
+  store();
+}
+
+function storeTagSummaries(
+  db: Database.Database,
+  prId: number,
+  llmRunId: number,
+  tagSummaries: LlmTagSummary[],
+): void {
+  if (tagSummaries.length === 0) return;
+
+  const getTagId = db.prepare('SELECT id FROM tags WHERE name = ?');
+
+  const upsertSummary = db.prepare(`
+    INSERT INTO tag_summaries (pr_id, tag_id, summary, llm_run_id)
+    VALUES (@prId, @tagId, @summary, @llmRunId)
+    ON CONFLICT (pr_id, tag_id) DO UPDATE SET
+      summary = @summary,
+      llm_run_id = @llmRunId
+  `);
+
+  const store = db.transaction(() => {
+    for (const ts of tagSummaries) {
+      const tag = getTagId.get(ts.tag) as { id: number } | undefined;
+      if (!tag) continue;
+
+      upsertSummary.run({
+        prId,
+        tagId: tag.id,
+        summary: ts.summary,
+        llmRunId,
+      });
     }
   });
 

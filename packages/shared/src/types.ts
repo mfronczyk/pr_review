@@ -149,6 +149,12 @@ export interface LlmAnalysisResult {
   prSummary: string;
   suggestedTags: LlmSuggestedTag[];
   chunkAssignments: LlmChunkAssignment[];
+  tagSummaries: LlmTagSummary[];
+}
+
+export interface LlmTagSummary {
+  tag: string;
+  summary: string;
 }
 
 // ── API Request/Response Types ──────────────────────────────
@@ -197,4 +203,12 @@ export interface SubmitReviewResponse {
 
 export interface ServerConfig {
   repoPath: string;
+}
+
+// ── Tag Summary ────────────────────────────────────────────
+
+export interface TagSummary {
+  tagId: number;
+  tagName: string;
+  summary: string;
 }

@@ -16,6 +16,7 @@ import type {
   SubmitReviewResponse,
   SyncResult,
   Tag,
+  TagSummary,
 } from '@pr-review/shared';
 
 class ApiError extends Error {
@@ -74,6 +75,10 @@ export function syncPr(id: number): Promise<SyncResult> {
 
 export function analyzePr(id: number): Promise<LlmAnalysisResult> {
   return request(`/api/prs/${id}/analyze`, { method: 'POST' });
+}
+
+export function getTagSummaries(prId: number): Promise<TagSummary[]> {
+  return request(`/api/prs/${prId}/tag-summaries`);
 }
 
 export function submitReview(

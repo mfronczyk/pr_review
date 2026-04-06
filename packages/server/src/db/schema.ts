@@ -107,6 +107,15 @@ function createTables(db: Database.Database): void {
       summary       TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS tag_summaries (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      pr_id         INTEGER NOT NULL REFERENCES prs(id) ON DELETE CASCADE,
+      tag_id        INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+      summary       TEXT NOT NULL,
+      llm_run_id    INTEGER REFERENCES llm_runs(id) ON DELETE SET NULL,
+      UNIQUE(pr_id, tag_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_chunks_pr_id ON chunks(pr_id);
     CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash);
     CREATE INDEX IF NOT EXISTS idx_chunk_tags_chunk_id ON chunk_tags(chunk_id);
@@ -115,6 +124,7 @@ function createTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_comments_pr_id ON comments(pr_id);
     CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON comments(parent_id);
     CREATE INDEX IF NOT EXISTS idx_llm_runs_pr_id ON llm_runs(pr_id);
+    CREATE INDEX IF NOT EXISTS idx_tag_summaries_pr_id ON tag_summaries(pr_id);
   `);
 }
 

@@ -18,6 +18,7 @@ interface GroupInfo {
   tag: Tag;
   chunks: ChunkWithDetails[];
   approvedCount: number;
+  summary?: string;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -563,6 +564,11 @@ export function ReviewPage(): React.ReactElement {
 
   const { data: tags } = useAsync(() => api.getTags(), []);
 
+  const { data: tagSummaries, reload: reloadTagSummaries } = useAsync(
+    () => api.getTagSummaries(prId),
+    [prId],
+  );
+
   const { data: modelInfo } = useAsync(() => api.getModelInfo(), []);
 
   const modelLabel = useMemo((): string | null => {
@@ -573,7 +579,8 @@ export function ReviewPage(): React.ReactElement {
   const reload = useCallback(() => {
     reloadPr();
     reloadChunks();
-  }, [reloadPr, reloadChunks]);
+    reloadTagSummaries();
+  }, [reloadPr, reloadChunks, reloadTagSummaries]);
 
   /** Wraps an async action with error handling. */
   const withErrorHandling = useCallback(async (fn: () => Promise<void>): Promise<void> => {
@@ -588,6 +595,13 @@ export function ReviewPage(): React.ReactElement {
   // Build groups from tag assignments
   const groups = useMemo((): GroupInfo[] => {
     if (!chunks || !tags) return [];
+    // Build a lookup from tag name to summary
+    const summaryByTagName = new Map<string, string>();
+    if (tagSummaries) {
+      for (const ts of tagSummaries) {
+        summaryByTagName.set(ts.tagName, ts.summary);
+      }
+    }
     const map = new Map<number, GroupInfo>();
     for (const tag of tags) {
       const tagChunks = chunks.filter((c) => c.tags.some((t) => t.id === tag.id));
@@ -596,11 +610,19 @@ export function ReviewPage(): React.ReactElement {
           tag,
           chunks: tagChunks,
           approvedCount: tagChunks.filter((c) => c.approved).length,
+          summary: summaryByTagName.get(tag.name),
         });
       }
     }
     return Array.from(map.values()).sort((a, b) => b.chunks.length - a.chunks.length);
-  }, [chunks, tags]);
+  }, [chunks, tags, tagSummaries]);
+
+  // Derive the summary for the currently selected group (if any)
+  const activeGroupSummary = useMemo((): string | null => {
+    if (!activeFilter) return null;
+    const group = groups.find((g) => g.tag.name === activeFilter.value);
+    return group?.summary ?? null;
+  }, [activeFilter, groups]);
 
   // Get unique file list — scoped to the active tag filter so the sidebar
   // only shows files that contain chunks from the selected group.
@@ -958,6 +980,12 @@ export function ReviewPage(): React.ReactElement {
           unpublishedCount={unpublishedCount}
           modelLabel={modelLabel}
         />
+
+        {activeGroupSummary && (
+          <div className="flex-shrink-0 border-b border-border-secondary bg-surface-secondary px-4 py-2">
+            <p className="text-xs text-fg-secondary">{activeGroupSummary}</p>
+          </div>
+        )}
 
         <div className="flex-1 overflow-hidden">
           {filteredChunks.length === 0 ? (
