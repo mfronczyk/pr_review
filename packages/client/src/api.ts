@@ -81,10 +81,6 @@ export function getTagSummaries(prId: number): Promise<TagSummary[]> {
   return request(`/api/prs/${prId}/tag-summaries`);
 }
 
-export function getPrSummary(prId: number): Promise<{ summary: string | null }> {
-  return request(`/api/prs/${prId}/summary`);
-}
-
 export function submitReview(
   id: number,
   event: ReviewEvent,

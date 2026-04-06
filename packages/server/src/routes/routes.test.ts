@@ -352,49 +352,6 @@ describe('Tag summary routes', () => {
   });
 });
 
-describe('PR summary routes', () => {
-  it('GET /api/prs/:id/summary should return null when no analysis has run', async () => {
-    const res = await request(app).get('/api/prs/1/summary');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ summary: null });
-  });
-
-  it('GET /api/prs/:id/summary should return the most recent completed summary', async () => {
-    // Insert a completed LLM run with a summary
-    db.prepare(
-      "INSERT INTO llm_runs (pr_id, status, finished_at, summary) VALUES (1, 'completed', datetime('now'), ?)",
-    ).run('This PR refactors the authentication module.\n\nIt improves token handling.');
-
-    const res = await request(app).get('/api/prs/1/summary');
-    expect(res.status).toBe(200);
-    expect(res.body.summary).toBe(
-      'This PR refactors the authentication module.\n\nIt improves token handling.',
-    );
-
-    // Cleanup
-    db.prepare("DELETE FROM llm_runs WHERE status = 'completed' AND pr_id = 1").run();
-  });
-
-  it('GET /api/prs/:id/summary should ignore failed runs', async () => {
-    db.prepare(
-      "INSERT INTO llm_runs (pr_id, status, finished_at, summary) VALUES (1, 'failed', datetime('now'), 'Error: something')",
-    ).run();
-
-    const res = await request(app).get('/api/prs/1/summary');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ summary: null });
-
-    // Cleanup
-    db.prepare("DELETE FROM llm_runs WHERE status = 'failed' AND pr_id = 1").run();
-  });
-
-  it('GET /api/prs/:id/summary should return null for non-existent PR', async () => {
-    const res = await request(app).get('/api/prs/999/summary');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ summary: null });
-  });
-});
-
 describe('Submit review routes', () => {
   it('POST /api/prs/:id/submit-review should return 400 for invalid event', async () => {
     const res = await request(app)

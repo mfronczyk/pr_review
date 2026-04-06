@@ -105,8 +105,7 @@ function createTables(db: Database.Database): void {
       pr_id         INTEGER NOT NULL REFERENCES prs(id) ON DELETE CASCADE,
       started_at    TEXT NOT NULL DEFAULT (datetime('now')),
       finished_at   TEXT,
-      status        TEXT NOT NULL DEFAULT 'running',
-      summary       TEXT
+      status        TEXT NOT NULL DEFAULT 'running'
     );
 
     CREATE TABLE IF NOT EXISTS tag_summaries (

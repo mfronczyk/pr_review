@@ -145,17 +145,12 @@ export interface LlmAnalyzerOptions {
 }
 
 /**
- * JSON Schema for the LLM structured output.
- * Defines the expected shape of the analysis response.
+ * JSON Schema for Phase 1: Tag discovery and chunk assignment.
+ * The LLM assigns tags and priorities but generates no summaries.
  */
-export const ANALYSIS_SCHEMA = {
+export const TAGGING_SCHEMA = {
   type: 'object',
   properties: {
-    pr_summary: {
-      type: 'string',
-      description:
-        'A thorough markdown-formatted summary of what was changed. Describe the areas of the codebase affected, the logical order of changes, and their purpose. End with a "Key areas to focus on" section listing the most important files/functions/patterns the reviewer should scrutinize, with a brief reason for each. Use markdown formatting (bold, lists, etc.) for readability.',
-    },
     tags: {
       type: 'array',
       description:
@@ -208,36 +203,32 @@ export const ANALYSIS_SCHEMA = {
         required: ['file_path', 'chunk_index', 'tags', 'priority', 'review_note'],
       },
     },
-    tag_summaries: {
-      type: 'array',
-      description:
-        'A summary for each tag, describing the specific code changes in that group, where they happened, the logical flow, and their purpose.',
-      items: {
-        type: 'object',
-        properties: {
-          tag: {
-            type: 'string',
-            description: 'Tag name (must match a tag used in chunk_assignments)',
-          },
-          summary: {
-            type: 'string',
-            description:
-              'A markdown-formatted summary describing the specific code changes in this group, which files/functions were modified, the logical flow of changes, and their purpose. If any chunks deserve extra attention, end with a note on what the reviewer should watch for.',
-          },
-        },
-        required: ['tag', 'summary'],
-      },
-    },
   },
-  required: ['pr_summary', 'tags', 'chunk_assignments', 'tag_summaries'],
+  required: ['tags', 'chunk_assignments'],
 } as const;
 
 /**
- * Build the system prompt — role, taxonomy, instructions, and formatting guidance.
+ * JSON Schema for Phase 2: Tag summary generation.
+ * Each call generates a summary for a single tag group.
+ */
+export const SUMMARY_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: {
+      type: 'string',
+      description:
+        'A markdown-formatted summary describing the specific code changes in this tag group, which files/functions were modified, the logical flow of changes, and their purpose. If any chunks deserve extra attention, end with a note on what the reviewer should watch for.',
+    },
+  },
+  required: ['summary'],
+} as const;
+
+/**
+ * Build the system prompt for Phase 1 — tag discovery and chunk assignment.
  * This overrides OpenCode's default system prompt so the LLM acts as a PR reviewer,
  * not a coding agent.
  */
-export function buildSystemPrompt(): string {
+export function buildTaggingSystemPrompt(): string {
   return `You are a senior code reviewer helping a human reviewer understand a pull request.
 
 Your purpose is to split this change into different aspects — like a prism splitting light —
@@ -274,40 +265,64 @@ Not every dimension applies to every chunk. Assign tags from multiple dimensions
 
 ## Instructions
 
-1. **PR Summary**: Write a thorough summary of what was changed. Describe the areas of the
-   codebase affected, the logical order of changes, and their purpose. Cover both the "what"
-   and the "why". End with a **"Key areas to focus on"** section — a short bulleted list of
-   the most important files, functions, or patterns the reviewer should scrutinize closely,
-   with a brief reason for each (e.g. subtle logic, security-sensitive, easy to miss, complex
-   interaction between components).
-
-2. **Define Tags**: Define ALL tags you will use. Each tag needs a short name (kebab-case) and
+1. **Define Tags**: Define ALL tags you will use. Each tag needs a short name (kebab-case) and
    a brief description. Make functionality tags very specific to this PR — name them after the
    domain concepts, features, or behaviors you see in the code.
 
-3. **Assign Chunks**: For EVERY chunk in the diff, assign:
-   - One or more tags (from the tags you defined in step 2)
+2. **Assign Chunks**: For EVERY chunk in the diff, assign:
+   - One or more tags (from the tags you defined in step 1)
    - A priority (high/medium/low) based on review importance
    - A review_note ONLY for high-priority chunks or chunks needing special attention (null otherwise)
    Every chunk MUST receive at least one tag. Do not skip any chunks.
 
-4. **Tag Summaries**: For EACH tag you assigned to at least one chunk, write a summary of a few
-   sentences describing the specific code changes in this group, where they happened (which
-   files/functions), the logical flow of the changes, and their purpose. If any chunks in the
-   group deserve extra attention, end with a brief note on what specifically the reviewer should
-   watch for (e.g. edge cases, error handling gaps, naming inconsistencies, performance
-   implications, or tricky interactions with other parts of the codebase).
-
 ## Formatting
 
-All text fields (pr_summary, review_note, tag summaries) are rendered as **markdown**.
-Use markdown formatting for readability:
+The review_note field is rendered as **markdown**. Use markdown formatting for readability:
 - **Bold** for emphasis on key terms, file names, or concepts
-- Numbered lists for sequential items or multiple distinct changes
-- Bullet lists for related points
 - \`inline code\` for function names, variable names, file paths, and code references
 
 Be precise with file_path and chunk_index — they must match the diff exactly.`;
+}
+
+/**
+ * Build the system prompt for Phase 2 — tag summary generation.
+ */
+export function buildSummarySystemPrompt(): string {
+  return `You are a senior code reviewer writing a summary for a group of related code changes in a pull request. The changes have been grouped by a specific tag/aspect. Your summary should help a reviewer quickly understand what happened in this group.
+
+Write a concise markdown-formatted summary covering:
+- What specific code changes were made and where (files/functions)
+- The logical flow and purpose of the changes
+- If any chunks deserve extra attention, what the reviewer should watch for (e.g. edge cases, error handling gaps, performance implications)
+
+Use \`inline code\` for function names, variable names, and file paths. Use **bold** for emphasis. Keep it focused and actionable.`;
+}
+
+/**
+ * Build the user prompt for Phase 2 — summarize a single tag group.
+ */
+export function buildSummaryPrompt(
+  tagName: string,
+  tagDescription: string,
+  chunks: Array<{ filePath: string; chunkIndex: number; diffText: string }>,
+  prTitle: string,
+  prBody: string,
+): string {
+  const chunkContent = chunks
+    .map((c) => `=== ${c.filePath} chunk ${c.chunkIndex} ===\n${c.diffText}`)
+    .join('\n\n');
+
+  return `## Tag: ${tagName}
+**Description:** ${tagDescription}
+
+## PR Context
+- **Title:** ${prTitle}
+- **Description:** ${prBody || '(no description)'}
+
+## Chunks in this group
+${chunkContent}
+
+Write a summary for this tag group.`;
 }
 
 /**
@@ -349,14 +364,37 @@ ${commitSection}
 ## Full Diff
 ${diffContent}
 
-Analyze this pull request and return the structured JSON response.`;
+Analyze this pull request. Define tags and assign every chunk.`;
 }
+
+/**
+ * Shared tool-disable map for all OpenCode prompts.
+ * Disables all built-in tools so the LLM generates structured JSON only.
+ */
+const TOOLS_DISABLED = {
+  bash: false,
+  edit: false,
+  write: false,
+  read: false,
+  grep: false,
+  glob: false,
+  list: false,
+  webfetch: false,
+  websearch: false,
+  todowrite: false,
+  task: false,
+  skill: false,
+  question: false,
+  lsp: false,
+  apply_patch: false,
+} as const;
 
 /**
  * Analyze PR chunks using OpenCode SDK with structured output.
  *
- * Creates an OpenCode session, sends the analysis prompt with the full diff,
- * and returns structured tag/priority assignments for each chunk.
+ * Two-phase pipeline:
+ * 1. Tag Discovery: Single call with full diff → tags + chunk assignments (no summaries)
+ * 2. Tag Summaries: Parallel calls per tag → one summary each
  */
 export async function analyzePr(
   options: LlmAnalyzerOptions,
@@ -388,20 +426,13 @@ export async function analyzePr(
     const { client, server } = await createOpencode({ port: 0 });
 
     try {
-      // Create a session for this analysis
-      console.log('[analyze] Creating session...');
-      const sessionResult = await client.session.create({
-        title: `PR #${prId} Analysis`,
-      });
+      const model = modelOverride ? `${modelOverride.provider}/${modelOverride.model}` : 'default';
 
-      const session = sessionResult.data;
-      if (!session) {
-        throw new Error('Failed to create OpenCode session');
-      }
-
-      // Build the prompts
-      const systemPrompt = buildSystemPrompt();
-      const prompt = buildAnalysisPrompt(
+      // ── Phase 1: Tag Discovery ──────────────────────────────
+      console.log('[analyze] Phase 1: Tag discovery...');
+      const taggingResult = await runTaggingPhase(
+        client,
+        prId,
         prTitle,
         prBody,
         prAuthor,
@@ -409,178 +440,46 @@ export async function analyzePr(
         headBranch,
         commitMessages,
         fileDiffs,
+        model,
+        modelOverride,
       );
-      const promptKb = Math.round(Buffer.byteLength(prompt, 'utf8') / 1024);
-      const systemKb = Math.round(Buffer.byteLength(systemPrompt, 'utf8') / 1024);
-      const model = modelOverride ? `${modelOverride.provider}/${modelOverride.model}` : 'default';
+
       console.log(
-        `[analyze] Sending prompt (system: ${systemKb} KB, user: ${promptKb} KB) to ${model}...`,
+        `[analyze] Phase 1 complete: ${taggingResult.chunkAssignments.length} chunks tagged, ${taggingResult.tags.length} tags defined`,
       );
 
-      if (process.env.DEBUG_LLM_PROMPT) {
-        console.log('[analyze] ─── SYSTEM PROMPT START ───');
-        console.log(systemPrompt);
-        console.log('[analyze] ─── SYSTEM PROMPT END ───');
-        console.log('[analyze] ─── USER PROMPT START ───');
-        console.log(prompt);
-        console.log('[analyze] ─── USER PROMPT END ───');
-      }
+      // Store chunk metadata and tags immediately (Phase 2 is additive)
+      storeChunkMetadata(db, prId, run.id, taggingResult.chunkAssignments, taggingResult.tags);
 
-      // Subscribe to session events for real-time activity logging
-      const eventResult = await client.event.subscribe();
-      const eventStream = eventResult.stream;
-      let stopEventStream = false;
+      // ── Phase 2: Tag Summaries (parallel) ───────────────────
+      console.log(
+        `[analyze] Phase 2: Generating summaries for ${taggingResult.tags.length} tags (parallel)...`,
+      );
+      const tagSummaries = await runSummaryPhase(
+        client,
+        taggingResult.tags,
+        taggingResult.chunkAssignments,
+        fileDiffs,
+        prTitle,
+        prBody,
+        modelOverride,
+      );
 
-      const eventLoop = (async () => {
-        try {
-          for await (const event of eventStream) {
-            if (stopEventStream) break;
-            const evt = event as { type: string; properties?: Record<string, unknown> };
-            if (!evt.properties) continue;
+      console.log(
+        `[analyze] Phase 2 complete: ${tagSummaries.length}/${taggingResult.tags.length} summaries generated`,
+      );
 
-            // Only log events for our session
-            const evtSessionId = evt.properties.sessionID as string | undefined;
-            if (evtSessionId && evtSessionId !== session.id) continue;
-
-            switch (evt.type) {
-              case 'session.status': {
-                const status = evt.properties.status as { type: string; message?: string };
-                if (status.type === 'retry') {
-                  console.log(`[analyze] LLM retrying: ${status.message ?? 'unknown reason'}`);
-                } else if (status.type === 'busy') {
-                  console.log('[analyze] LLM processing...');
-                }
-                break;
-              }
-              case 'session.error': {
-                const error = evt.properties.error as { name?: string; data?: unknown } | undefined;
-                console.error(
-                  `[analyze] LLM error event: ${error?.name ?? 'unknown'}`,
-                  error?.data ? JSON.stringify(error.data) : '',
-                );
-                break;
-              }
-              case 'message.part.updated': {
-                const part = evt.properties.part as { type: string; [key: string]: unknown };
-                if (part.type === 'tool') {
-                  const tool = part.tool as string;
-                  const state = part.state as { status?: string } | string;
-                  const stateStr = typeof state === 'string' ? state : JSON.stringify(state);
-                  console.log(`[analyze]   tool: ${tool} [${stateStr}]`);
-                } else if (part.type === 'step-start') {
-                  console.log('[analyze]   step started');
-                } else if (part.type === 'step-finish') {
-                  const tokens = part.tokens as {
-                    input: number;
-                    output: number;
-                  };
-                  const cost = part.cost as number;
-                  console.log(
-                    `[analyze]   step finished (${tokens.input} in / ${tokens.output} out, $${cost.toFixed(4)})`,
-                  );
-                } else if (part.type === 'retry') {
-                  const attempt = part.attempt as number;
-                  const error = part.error as { name?: string } | undefined;
-                  console.log(
-                    `[analyze]   retry attempt ${attempt}: ${error?.name ?? 'unknown error'}`,
-                  );
-                } else if (part.type === 'text') {
-                  const text = (part.text as string) ?? '';
-                  const preview = text.length > 120 ? `${text.slice(0, 120)}...` : text;
-                  if (preview.trim()) {
-                    console.log(`[analyze]   text: ${preview}`);
-                  }
-                }
-                break;
-              }
-              case 'message.part.delta': {
-                // Streaming delta — only log periodically to avoid spam
-                break;
-              }
-              default:
-                break;
-            }
-          }
-        } catch {
-          // Stream closed — expected when we stop it
-        }
-      })();
-
-      // Send prompt with structured output, system override, and all tools disabled.
-      // tools: { name: false } disables each tool individually; empty {} means "no overrides".
-      const startTime = Date.now();
-      const response = await client.session.prompt({
-        sessionID: session.id,
-        system: systemPrompt,
-        parts: [{ type: 'text', text: prompt }],
-        tools: {
-          bash: false,
-          edit: false,
-          write: false,
-          read: false,
-          grep: false,
-          glob: false,
-          list: false,
-          webfetch: false,
-          websearch: false,
-          todowrite: false,
-          task: false,
-          skill: false,
-          question: false,
-          lsp: false,
-          apply_patch: false,
-        },
-        ...(modelOverride && {
-          model: { providerID: modelOverride.provider, modelID: modelOverride.model },
-        }),
-        format: {
-          type: 'json_schema',
-          schema: ANALYSIS_SCHEMA,
-          retryCount: 2,
-        },
-      });
-
-      // Stop the event stream
-      stopEventStream = true;
-      eventStream.return(undefined);
-      await eventLoop.catch(() => {});
-
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`[analyze] LLM responded in ${elapsed}s`);
-
-      // Check for errors
-      const data = response.data;
-      if (!data) {
-        if (response.error) {
-          console.error('[analyze] SDK error:', JSON.stringify(response.error, null, 2));
-        }
-        console.error('[analyze] HTTP status:', response.response?.status);
-        throw new Error(
-          `No response data from LLM: ${response.error ? JSON.stringify(response.error) : 'unknown error'}`,
-        );
-      }
-
-      if (data.info.error) {
-        const errName = data.info.error.name;
-        const errData = data.info.error.data;
-        throw new Error(`LLM error (${errName}): ${JSON.stringify(errData)}`);
-      }
-
-      // Parse the structured output
-      const structured = data.info.structured as RawAnalysisResult | undefined;
-      if (!structured) {
-        throw new Error('No structured output returned from LLM');
-      }
-
-      const result = mapAnalysisResult(structured);
+      // Build final result
+      const result: LlmAnalysisResult = {
+        tags: taggingResult.tags,
+        chunkAssignments: taggingResult.chunkAssignments,
+        tagSummaries,
+      };
 
       // Update run status
       db.prepare(
-        "UPDATE llm_runs SET status = 'completed', finished_at = datetime('now'), summary = ? WHERE id = ?",
-      ).run(result.prSummary, run.id);
-
-      // Store chunk metadata and tags
-      storeChunkMetadata(db, prId, run.id, result.chunkAssignments, result.tags);
+        "UPDATE llm_runs SET status = 'completed', finished_at = datetime('now') WHERE id = ?",
+      ).run(run.id);
 
       // Store tag summaries
       storeTagSummaries(db, prId, run.id, result.tagSummaries);
@@ -598,16 +497,312 @@ export async function analyzePr(
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`[analyze] Failed: ${msg}`);
     db.prepare(
-      "UPDATE llm_runs SET status = 'failed', finished_at = datetime('now'), summary = ? WHERE id = ?",
-    ).run(`Error: ${msg}`, run.id);
+      "UPDATE llm_runs SET status = 'failed', finished_at = datetime('now') WHERE id = ?",
+    ).run(run.id);
     throw error;
   }
 }
 
+// ── Phase Runners ───────────────────────────────────────────
+
+/** OpenCode client type — loosely typed to avoid importing internal SDK types. */
+// biome-ignore lint/suspicious/noExplicitAny: SDK types are complex; we use minimal structural typing
+type OpenCodeClient = any;
+
+/**
+ * Phase 1: Send the full diff and get tag assignments for every chunk.
+ */
+async function runTaggingPhase(
+  client: OpenCodeClient,
+  prId: number,
+  prTitle: string,
+  prBody: string,
+  prAuthor: string,
+  baseBranch: string,
+  headBranch: string,
+  commitMessages: string[],
+  fileDiffs: ParsedFileDiff[],
+  modelLabel: string,
+  modelOverride?: LlmModelInfo,
+): Promise<{ tags: LlmTagDefinition[]; chunkAssignments: LlmChunkAssignment[] }> {
+  // Create a session
+  const sessionResult = await client.session.create({
+    title: `PR #${prId} Tagging`,
+  });
+  const session = sessionResult.data;
+  if (!session) {
+    throw new Error('Failed to create OpenCode session for tagging');
+  }
+
+  const systemPrompt = buildTaggingSystemPrompt();
+  const prompt = buildAnalysisPrompt(
+    prTitle,
+    prBody,
+    prAuthor,
+    baseBranch,
+    headBranch,
+    commitMessages,
+    fileDiffs,
+  );
+  const promptKb = Math.round(Buffer.byteLength(prompt, 'utf8') / 1024);
+  const systemKb = Math.round(Buffer.byteLength(systemPrompt, 'utf8') / 1024);
+  console.log(
+    `[analyze]   Tagging prompt (system: ${systemKb} KB, user: ${promptKb} KB) → ${modelLabel}`,
+  );
+
+  if (process.env.DEBUG_LLM_PROMPT) {
+    console.log('[analyze] ─── TAGGING SYSTEM PROMPT START ───');
+    console.log(systemPrompt);
+    console.log('[analyze] ─── TAGGING SYSTEM PROMPT END ───');
+    console.log('[analyze] ─── TAGGING USER PROMPT START ───');
+    console.log(prompt);
+    console.log('[analyze] ─── TAGGING USER PROMPT END ───');
+  }
+
+  // Subscribe to events for real-time logging
+  const { eventLoop, stopEvents } = createEventLogger(client, session.id);
+
+  const startTime = Date.now();
+  const response = await client.session.prompt({
+    sessionID: session.id,
+    system: systemPrompt,
+    parts: [{ type: 'text', text: prompt }],
+    tools: TOOLS_DISABLED,
+    ...(modelOverride && {
+      model: { providerID: modelOverride.provider, modelID: modelOverride.model },
+    }),
+    format: {
+      type: 'json_schema',
+      schema: TAGGING_SCHEMA,
+      retryCount: 2,
+    },
+  });
+
+  await stopEvents();
+  await eventLoop.catch(() => {});
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  console.log(`[analyze]   Tagging responded in ${elapsed}s`);
+
+  // Parse response
+  const data = response.data;
+  if (!data) {
+    if (response.error) {
+      console.error('[analyze] SDK error:', JSON.stringify(response.error, null, 2));
+    }
+    console.error('[analyze] HTTP status:', response.response?.status);
+    throw new Error(
+      `No response data from tagging: ${response.error ? JSON.stringify(response.error) : 'unknown error'}`,
+    );
+  }
+
+  if (data.info.error) {
+    throw new Error(
+      `Tagging error (${data.info.error.name}): ${JSON.stringify(data.info.error.data)}`,
+    );
+  }
+
+  const structured = data.info.structured as RawTaggingResult | undefined;
+  if (!structured) {
+    throw new Error('No structured output returned from tagging');
+  }
+
+  return mapTaggingResult(structured);
+}
+
+/**
+ * Phase 2: For each tag, send its chunks and get a summary. All calls run in parallel.
+ * If a single summary fails, logs the error and continues with the rest.
+ */
+async function runSummaryPhase(
+  client: OpenCodeClient,
+  tags: LlmTagDefinition[],
+  chunkAssignments: LlmChunkAssignment[],
+  fileDiffs: ParsedFileDiff[],
+  prTitle: string,
+  prBody: string,
+  modelOverride?: LlmModelInfo,
+): Promise<LlmTagSummary[]> {
+  // Build a lookup from filePath+chunkIndex to diff text
+  const diffLookup = new Map<string, string>();
+  for (const fd of fileDiffs) {
+    for (const c of fd.chunks) {
+      diffLookup.set(`${fd.filePath}:${c.chunkIndex}`, c.diffText);
+    }
+  }
+
+  const summarySystemPrompt = buildSummarySystemPrompt();
+  const startTime = Date.now();
+
+  const results = await Promise.allSettled(
+    tags.map(async (tag): Promise<LlmTagSummary> => {
+      // Gather chunks for this tag
+      const tagChunks = chunkAssignments
+        .filter((a) => a.tags.includes(tag.name))
+        .map((a) => ({
+          filePath: a.filePath,
+          chunkIndex: a.chunkIndex,
+          diffText: diffLookup.get(`${a.filePath}:${a.chunkIndex}`) ?? '',
+        }));
+
+      if (tagChunks.length === 0) {
+        return { tag: tag.name, summary: tag.description };
+      }
+
+      const summaryPrompt = buildSummaryPrompt(
+        tag.name,
+        tag.description,
+        tagChunks,
+        prTitle,
+        prBody,
+      );
+
+      // Create a separate session for each summary
+      const sessionResult = await client.session.create({
+        title: `Summary: ${tag.name}`,
+      });
+      const session = sessionResult.data;
+      if (!session) {
+        throw new Error(`Failed to create session for tag "${tag.name}"`);
+      }
+
+      const response = await client.session.prompt({
+        sessionID: session.id,
+        system: summarySystemPrompt,
+        parts: [{ type: 'text', text: summaryPrompt }],
+        tools: TOOLS_DISABLED,
+        ...(modelOverride && {
+          model: { providerID: modelOverride.provider, modelID: modelOverride.model },
+        }),
+        format: {
+          type: 'json_schema',
+          schema: SUMMARY_SCHEMA,
+          retryCount: 1,
+        },
+      });
+
+      const data = response.data;
+      if (!data || data.info.error) {
+        throw new Error(`Summary failed for "${tag.name}": ${data?.info.error?.name ?? 'no data'}`);
+      }
+
+      const structured = data.info.structured as { summary: string } | undefined;
+      if (!structured?.summary) {
+        throw new Error(`No summary content for "${tag.name}"`);
+      }
+
+      return { tag: tag.name, summary: structured.summary };
+    }),
+  );
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  console.log(`[analyze]   All summaries completed in ${elapsed}s`);
+
+  // Collect results, log failures
+  const summaries: LlmTagSummary[] = [];
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    if (result.status === 'fulfilled') {
+      summaries.push(result.value);
+    } else {
+      console.error(`[analyze]   Summary failed for tag "${tags[i].name}": ${result.reason}`);
+    }
+  }
+
+  return summaries;
+}
+
+// ── Event Logger ────────────────────────────────────────────
+
+function createEventLogger(
+  client: OpenCodeClient,
+  sessionId: string,
+): { eventLoop: Promise<void>; stopEvents: () => Promise<void> } {
+  let stopEventStream = false;
+  // biome-ignore lint/suspicious/noExplicitAny: SDK stream type is complex
+  let eventStream: any = null;
+
+  const eventLoop = (async () => {
+    try {
+      const eventResult = await client.event.subscribe();
+      eventStream = eventResult.stream;
+
+      for await (const event of eventStream) {
+        if (stopEventStream) break;
+        const evt = event as { type: string; properties?: Record<string, unknown> };
+        if (!evt.properties) continue;
+
+        const evtSessionId = evt.properties.sessionID as string | undefined;
+        if (evtSessionId && evtSessionId !== sessionId) continue;
+
+        switch (evt.type) {
+          case 'session.status': {
+            const status = evt.properties.status as { type: string; message?: string };
+            if (status.type === 'retry') {
+              console.log(`[analyze] LLM retrying: ${status.message ?? 'unknown reason'}`);
+            } else if (status.type === 'busy') {
+              console.log('[analyze] LLM processing...');
+            }
+            break;
+          }
+          case 'session.error': {
+            const error = evt.properties.error as { name?: string; data?: unknown } | undefined;
+            console.error(
+              `[analyze] LLM error event: ${error?.name ?? 'unknown'}`,
+              error?.data ? JSON.stringify(error.data) : '',
+            );
+            break;
+          }
+          case 'message.part.updated': {
+            const part = evt.properties.part as { type: string; [key: string]: unknown };
+            if (part.type === 'tool') {
+              const tool = part.tool as string;
+              const state = part.state as { status?: string } | string;
+              const stateStr = typeof state === 'string' ? state : JSON.stringify(state);
+              console.log(`[analyze]   tool: ${tool} [${stateStr}]`);
+            } else if (part.type === 'step-start') {
+              console.log('[analyze]   step started');
+            } else if (part.type === 'step-finish') {
+              const tokens = part.tokens as { input: number; output: number };
+              const cost = part.cost as number;
+              console.log(
+                `[analyze]   step finished (${tokens.input} in / ${tokens.output} out, $${cost.toFixed(4)})`,
+              );
+            } else if (part.type === 'retry') {
+              const attempt = part.attempt as number;
+              const error = part.error as { name?: string } | undefined;
+              console.log(
+                `[analyze]   retry attempt ${attempt}: ${error?.name ?? 'unknown error'}`,
+              );
+            } else if (part.type === 'text') {
+              const text = (part.text as string) ?? '';
+              const preview = text.length > 120 ? `${text.slice(0, 120)}...` : text;
+              if (preview.trim()) {
+                console.log(`[analyze]   text: ${preview}`);
+              }
+            }
+            break;
+          }
+          default:
+            break;
+        }
+      }
+    } catch {
+      // Stream closed — expected when we stop it
+    }
+  })();
+
+  const stopEvents = async (): Promise<void> => {
+    stopEventStream = true;
+    eventStream?.return(undefined);
+  };
+
+  return { eventLoop, stopEvents };
+}
+
 // ── Internal Types ──────────────────────────────────────────
 
-interface RawAnalysisResult {
-  pr_summary: string;
+interface RawTaggingResult {
   tags: Array<{
     name: string;
     description: string;
@@ -619,17 +814,15 @@ interface RawAnalysisResult {
     priority: string;
     review_note: string | null;
   }>;
-  tag_summaries: Array<{
-    tag: string;
-    summary: string;
-  }>;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
 
-function mapAnalysisResult(raw: RawAnalysisResult): LlmAnalysisResult {
+function mapTaggingResult(raw: RawTaggingResult): {
+  tags: LlmTagDefinition[];
+  chunkAssignments: LlmChunkAssignment[];
+} {
   return {
-    prSummary: raw.pr_summary,
     tags: raw.tags.map((t) => ({
       name: t.name,
       description: t.description,
@@ -640,10 +833,6 @@ function mapAnalysisResult(raw: RawAnalysisResult): LlmAnalysisResult {
       tags: a.tags,
       priority: validatePriority(a.priority),
       reviewNote: a.review_note,
-    })),
-    tagSummaries: (raw.tag_summaries ?? []).map((ts) => ({
-      tag: ts.tag,
-      summary: ts.summary,
     })),
   };
 }

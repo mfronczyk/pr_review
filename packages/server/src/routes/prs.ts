@@ -209,27 +209,6 @@ export function createPrRoutes(
   });
 
   /**
-   * GET /api/prs/:id/summary
-   * Get the LLM-generated PR summary from the most recent completed analysis run.
-   */
-  router.get('/:id/summary', (req, res) => {
-    try {
-      const prId = Number(req.params.id);
-      const row = db
-        .prepare(
-          `SELECT summary FROM llm_runs
-           WHERE pr_id = ? AND status = 'completed' AND summary IS NOT NULL
-           ORDER BY finished_at DESC LIMIT 1`,
-        )
-        .get(prId) as { summary: string } | undefined;
-
-      res.json({ summary: row?.summary ?? null });
-    } catch (error) {
-      res.status(500).json({ error: errorMessage(error) });
-    }
-  });
-
-  /**
    * POST /api/prs/:id/submit-review
    * Submit a review on the PR (APPROVE or COMMENT).
    */

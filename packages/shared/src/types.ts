@@ -115,7 +115,6 @@ export interface LlmRun {
   startedAt: string;
   finishedAt: string | null;
   status: LlmRunStatus;
-  summary: string | null;
 }
 
 // ── LLM Analysis Output ────────────────────────────────────
@@ -134,7 +133,6 @@ export interface LlmChunkAssignment {
 }
 
 export interface LlmAnalysisResult {
-  prSummary: string;
   tags: LlmTagDefinition[];
   chunkAssignments: LlmChunkAssignment[];
   tagSummaries: LlmTagSummary[];

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ParsedFileDiff } from './diff-parser.js';
-import { buildAnalysisPrompt, buildSystemPrompt } from './llm-analyzer.js';
+import {
+  buildAnalysisPrompt,
+  buildSummaryPrompt,
+  buildSummarySystemPrompt,
+  buildTaggingSystemPrompt,
+} from './llm-analyzer.js';
 
 const SAMPLE_FILE_DIFFS: ParsedFileDiff[] = [
   {
@@ -191,47 +196,72 @@ describe('buildAnalysisPrompt', () => {
   });
 });
 
-describe('buildSystemPrompt', () => {
+describe('buildTaggingSystemPrompt', () => {
   it('should include role and tag taxonomy', () => {
-    const system = buildSystemPrompt();
+    const system = buildTaggingSystemPrompt();
 
     expect(system).toContain('senior code reviewer');
     expect(system).toContain('Layer');
     expect(system).toContain('Functionality');
   });
 
-  it('should include instructions and formatting guidance', () => {
-    const system = buildSystemPrompt();
+  it('should include tagging instructions but not summary instructions', () => {
+    const system = buildTaggingSystemPrompt();
 
-    expect(system).toContain('PR Summary');
     expect(system).toContain('Define Tags');
     expect(system).toContain('Assign Chunks');
-    expect(system).toContain('Tag Summaries');
-    expect(system).toContain('markdown');
+    expect(system).not.toContain('PR Summary');
+    expect(system).not.toContain('Tag Summaries');
   });
 });
 
-describe('ANALYSIS_SCHEMA', () => {
-  it('should be a valid JSON schema shape', async () => {
-    const { ANALYSIS_SCHEMA } = await import('./llm-analyzer.js');
+describe('buildSummarySystemPrompt', () => {
+  it('should include summarizer role', () => {
+    const system = buildSummarySystemPrompt();
 
-    expect(ANALYSIS_SCHEMA.type).toBe('object');
-    expect(ANALYSIS_SCHEMA.required).toContain('pr_summary');
-    expect(ANALYSIS_SCHEMA.required).toContain('tags');
-    expect(ANALYSIS_SCHEMA.required).toContain('chunk_assignments');
-    expect(ANALYSIS_SCHEMA.required).toContain('tag_summaries');
-    expect(ANALYSIS_SCHEMA.properties.chunk_assignments.type).toBe('array');
+    expect(system).toContain('senior code reviewer');
+    expect(system).toContain('summary');
   });
+});
 
-  it('should include tag_summaries array with tag and summary fields', async () => {
-    const { ANALYSIS_SCHEMA } = await import('./llm-analyzer.js');
+describe('buildSummaryPrompt', () => {
+  it('should include tag name, description, and chunk content', () => {
+    const prompt = buildSummaryPrompt(
+      'database-migration',
+      'Database schema changes',
+      [{ filePath: 'schema.ts', chunkIndex: 0, diffText: '+ALTER TABLE users ADD COLUMN email' }],
+      'Add user emails',
+      'Adds email column to users table',
+    );
 
-    const tagSummaries = ANALYSIS_SCHEMA.properties.tag_summaries;
-    expect(tagSummaries.type).toBe('array');
-    expect(tagSummaries.items.properties).toHaveProperty('tag');
-    expect(tagSummaries.items.properties).toHaveProperty('summary');
-    expect(tagSummaries.items.required).toContain('tag');
-    expect(tagSummaries.items.required).toContain('summary');
+    expect(prompt).toContain('database-migration');
+    expect(prompt).toContain('Database schema changes');
+    expect(prompt).toContain('schema.ts chunk 0');
+    expect(prompt).toContain('+ALTER TABLE users ADD COLUMN email');
+    expect(prompt).toContain('Add user emails');
+  });
+});
+
+describe('TAGGING_SCHEMA', () => {
+  it('should be a valid JSON schema with tags and chunk_assignments', async () => {
+    const { TAGGING_SCHEMA } = await import('./llm-analyzer.js');
+
+    expect(TAGGING_SCHEMA.type).toBe('object');
+    expect(TAGGING_SCHEMA.required).toContain('tags');
+    expect(TAGGING_SCHEMA.required).toContain('chunk_assignments');
+    expect(TAGGING_SCHEMA.required).not.toContain('pr_summary');
+    expect(TAGGING_SCHEMA.required).not.toContain('tag_summaries');
+    expect(TAGGING_SCHEMA.properties.chunk_assignments.type).toBe('array');
+  });
+});
+
+describe('SUMMARY_SCHEMA', () => {
+  it('should be a valid JSON schema with summary field', async () => {
+    const { SUMMARY_SCHEMA } = await import('./llm-analyzer.js');
+
+    expect(SUMMARY_SCHEMA.type).toBe('object');
+    expect(SUMMARY_SCHEMA.required).toContain('summary');
+    expect(SUMMARY_SCHEMA.properties.summary.type).toBe('string');
   });
 });
 

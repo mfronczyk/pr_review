@@ -583,11 +583,6 @@ export function ReviewPage(): React.ReactElement {
     [prId],
   );
 
-  const { data: prSummaryData, reload: reloadPrSummary } = useAsync(
-    () => api.getPrSummary(prId),
-    [prId],
-  );
-
   const { data: modelInfo } = useAsync(() => api.getModelInfo(), []);
 
   const modelLabel = useMemo((): string | null => {
@@ -600,8 +595,7 @@ export function ReviewPage(): React.ReactElement {
     reloadChunks();
     reloadTags();
     reloadTagSummaries();
-    reloadPrSummary();
-  }, [reloadPr, reloadChunks, reloadTags, reloadTagSummaries, reloadPrSummary]);
+  }, [reloadPr, reloadChunks, reloadTags, reloadTagSummaries]);
 
   /** Wraps an async action with error handling. */
   const withErrorHandling = useCallback(async (fn: () => Promise<void>): Promise<void> => {
@@ -639,15 +633,14 @@ export function ReviewPage(): React.ReactElement {
   }, [chunks, tags, tagSummaries]);
 
   // Derive the summary to show above the diff:
-  // - When a tag group is selected: show that group's summary
-  // - When no group is selected: show the overall PR summary
+  // When a tag group is selected, show that group's summary
   const activeSummary = useMemo((): string | null => {
     if (activeFilter) {
       const group = groups.find((g) => g.tag.name === activeFilter.value);
       return group?.summary ?? null;
     }
-    return prSummaryData?.summary ?? null;
-  }, [activeFilter, groups, prSummaryData]);
+    return null;
+  }, [activeFilter, groups]);
 
   // Get unique file list — scoped to the active tag filter so the sidebar
   // only shows files that contain chunks from the selected group.
