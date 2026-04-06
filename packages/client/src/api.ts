@@ -155,6 +155,7 @@ export function createComment(data: {
   prId: number;
   body: string;
   line: number;
+  side?: 'LEFT' | 'RIGHT';
   parentId?: number;
 }): Promise<Comment> {
   return request('/api/comments', {

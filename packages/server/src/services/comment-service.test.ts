@@ -35,6 +35,7 @@ describe('CommentService', () => {
       expect(comment.chunkId).toBe(chunkId);
       expect(comment.prId).toBe(prId);
       expect(comment.line).toBe(12);
+      expect(comment.side).toBe('RIGHT');
       expect(comment.parentId).toBeNull();
       expect(comment.author).toBeNull();
       expect(comment.ghCommentId).toBeNull();
@@ -42,23 +43,29 @@ describe('CommentService', () => {
       expect(comment.publishedAt).toBeNull();
     });
 
+    it('should create a comment on the LEFT side for deleted lines', () => {
+      const comment = service.createComment(chunkId, prId, 'Old line comment', 8, 'LEFT');
+      expect(comment.line).toBe(8);
+      expect(comment.side).toBe('LEFT');
+    });
+
     it('should create a reply to a root comment', () => {
       const root = service.createComment(chunkId, prId, 'Root comment', 12);
-      const reply = service.createComment(chunkId, prId, 'Reply text', 12, root.id);
+      const reply = service.createComment(chunkId, prId, 'Reply text', 12, 'RIGHT', root.id);
       expect(reply.parentId).toBe(root.id);
       expect(reply.line).toBe(12);
     });
 
     it('should reject reply to a reply (only root comments can have replies)', () => {
       const root = service.createComment(chunkId, prId, 'Root', 12);
-      const reply = service.createComment(chunkId, prId, 'Reply', 12, root.id);
-      expect(() => service.createComment(chunkId, prId, 'Nested', 12, reply.id)).toThrow(
+      const reply = service.createComment(chunkId, prId, 'Reply', 12, 'RIGHT', root.id);
+      expect(() => service.createComment(chunkId, prId, 'Nested', 12, 'RIGHT', reply.id)).toThrow(
         'Cannot reply to a reply',
       );
     });
 
     it('should reject reply to nonexistent parent', () => {
-      expect(() => service.createComment(chunkId, prId, 'Reply', 12, 999)).toThrow(
+      expect(() => service.createComment(chunkId, prId, 'Reply', 12, 'RIGHT', 999)).toThrow(
         'Parent comment not found',
       );
     });
@@ -74,9 +81,9 @@ describe('CommentService', () => {
       ).id;
 
       const root = service.createComment(chunkId, prId, 'Root', 12);
-      expect(() => service.createComment(chunk2Id, prId, 'Cross-chunk reply', 3, root.id)).toThrow(
-        'Reply must belong to the same chunk',
-      );
+      expect(() =>
+        service.createComment(chunk2Id, prId, 'Cross-chunk reply', 3, 'RIGHT', root.id),
+      ).toThrow('Reply must belong to the same chunk');
     });
   });
 
@@ -104,8 +111,8 @@ describe('CommentService', () => {
 
     it('should cascade-delete replies when root is deleted', () => {
       const root = service.createComment(chunkId, prId, 'Root', 12);
-      service.createComment(chunkId, prId, 'Reply 1', 12, root.id);
-      service.createComment(chunkId, prId, 'Reply 2', 12, root.id);
+      service.createComment(chunkId, prId, 'Reply 1', 12, 'RIGHT', root.id);
+      service.createComment(chunkId, prId, 'Reply 2', 12, 'RIGHT', root.id);
 
       expect(service.getCommentsForPr(prId)).toHaveLength(3);
       service.deleteComment(root.id);
@@ -157,7 +164,7 @@ describe('CommentService', () => {
 
     it('should throw when resolving a reply', async () => {
       const root = service.createComment(chunkId, prId, 'Root', 12);
-      const reply = service.createComment(chunkId, prId, 'Reply', 12, root.id);
+      const reply = service.createComment(chunkId, prId, 'Reply', 12, 'RIGHT', root.id);
       await expect(() => service.resolveThread(reply.id)).rejects.toThrow(
         'Can only resolve root comments',
       );
@@ -179,7 +186,7 @@ describe('CommentService', () => {
 
     it('should throw when unresolving a reply', async () => {
       const root = service.createComment(chunkId, prId, 'Root', 12);
-      const reply = service.createComment(chunkId, prId, 'Reply', 12, root.id);
+      const reply = service.createComment(chunkId, prId, 'Reply', 12, 'RIGHT', root.id);
       await expect(() => service.unresolveThread(reply.id)).rejects.toThrow(
         'Can only unresolve root comments',
       );

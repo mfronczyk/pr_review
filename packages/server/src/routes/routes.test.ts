@@ -214,10 +214,20 @@ describe('Comment routes', () => {
     expect(res.body).toHaveProperty('id');
     expect(res.body).toHaveProperty('body', 'Test comment');
     expect(res.body).toHaveProperty('line', 3);
+    expect(res.body).toHaveProperty('side', 'RIGHT');
     expect(res.body).toHaveProperty('parentId', null);
     expect(res.body).toHaveProperty('author', null);
     expect(res.body).toHaveProperty('resolved', false);
     commentId = res.body.id;
+  });
+
+  it('POST /api/comments should create a LEFT-side comment', async () => {
+    const res = await request(app)
+      .post('/api/comments')
+      .send({ chunkId: 1, prId: 1, body: 'Deleted line comment', line: 5, side: 'LEFT' });
+    expect(res.status).toBe(201);
+    expect(res.body).toHaveProperty('side', 'LEFT');
+    expect(res.body).toHaveProperty('line', 5);
   });
 
   it('POST /api/comments should create a reply', async () => {

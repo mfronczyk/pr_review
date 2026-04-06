@@ -22,22 +22,30 @@ export function createCommentRoutes(db: Database.Database): Router {
   /**
    * POST /api/comments
    * Create a new comment on a chunk at a specific line.
-   * Body: { chunkId, prId, body, line, parentId? }
+   * Body: { chunkId, prId, body, line, side?, parentId? }
    */
   router.post('/comments', (req, res) => {
     try {
-      const { chunkId, prId, body, line, parentId } = req.body as {
+      const { chunkId, prId, body, line, side, parentId } = req.body as {
         chunkId: number;
         prId: number;
         body: string;
         line: number;
+        side?: 'LEFT' | 'RIGHT';
         parentId?: number;
       };
       if (!chunkId || !prId || !body || line == null) {
         res.status(400).json({ error: 'chunkId, prId, body, and line are required' });
         return;
       }
-      const comment = commentService.createComment(chunkId, prId, body, line, parentId);
+      const comment = commentService.createComment(
+        chunkId,
+        prId,
+        body,
+        line,
+        side ?? 'RIGHT',
+        parentId,
+      );
       res.status(201).json(comment);
     } catch (error) {
       res.status(500).json({ error: errorMessage(error) });

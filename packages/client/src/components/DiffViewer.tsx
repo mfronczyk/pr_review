@@ -3,8 +3,8 @@
  * Each file is a rounded container with a sticky header and all its chunks inside.
  * Uses @tanstack/react-virtual for efficient rendering of large PRs.
  *
- * Comments are anchored to specific new-file lines within chunks and rendered
- * inline as threads (root + flat replies).
+ * Comments are anchored to specific lines within chunks (LEFT for deleted lines,
+ * RIGHT for added/context lines) and rendered inline as threads (root + flat replies).
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -26,7 +26,12 @@ interface DiffViewerProps {
   onToggleApproved: (chunkId: number) => void;
   onChunkDeparted: (chunkId: number) => void;
   onScrollToFileDone: () => void;
-  onAddComment: (chunkId: number, body: string, line: number) => Promise<void>;
+  onAddComment: (
+    chunkId: number,
+    body: string,
+    line: number,
+    side: 'LEFT' | 'RIGHT',
+  ) => Promise<void>;
   onReplyComment: (chunkId: number, parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
@@ -45,10 +50,10 @@ interface FileGroup {
 // ── Helpers ─────────────────────────────────────────────────
 
 /**
- * Group a flat Comment[] into threads keyed by new-file line number.
- * Returns a Map from line number to CommentThread[].
+ * Group a flat Comment[] into threads keyed by "line:side" (e.g. "42:RIGHT").
+ * Returns a Map from the composite key to CommentThread[].
  */
-function groupCommentsIntoThreads(comments: Comment[]): Map<number, CommentThread[]> {
+function groupCommentsIntoThreads(comments: Comment[]): Map<string, CommentThread[]> {
   const roots = comments.filter((c) => c.parentId == null);
   const repliesByParent = new Map<number, Comment[]>();
   for (const c of comments) {
@@ -62,18 +67,19 @@ function groupCommentsIntoThreads(comments: Comment[]): Map<number, CommentThrea
     }
   }
 
-  const byLine = new Map<number, CommentThread[]>();
+  const byKey = new Map<string, CommentThread[]>();
   for (const root of roots) {
     const replies = repliesByParent.get(root.id) ?? [];
     const thread: CommentThread = { root, replies };
-    const existing = byLine.get(root.line);
+    const key = `${root.line}:${root.side}`;
+    const existing = byKey.get(key);
     if (existing) {
       existing.push(thread);
     } else {
-      byLine.set(root.line, [thread]);
+      byKey.set(key, [thread]);
     }
   }
-  return byLine;
+  return byKey;
 }
 
 // ── Priority Badge ──────────────────────────────────────────
@@ -365,7 +371,7 @@ function ChunkBlock({
 }: {
   chunk: ChunkWithDetails;
   onToggleApproved: () => void;
-  onAddComment: (body: string, line: number) => Promise<void>;
+  onAddComment: (body: string, line: number, side: 'LEFT' | 'RIGHT') => Promise<void>;
   onReplyComment: (parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
@@ -394,17 +400,24 @@ function ChunkBlock({
   const threadsByLine = useMemo(() => groupCommentsIntoThreads(chunk.comments), [chunk.comments]);
 
   /**
-   * Determine the effective line number for a diff line.
-   * For add/context lines, use newLineNum. For del lines, use the newLineNum
-   * of the next non-del line (or fallback to old line).
-   * This gives us a "right-side" anchor for comments.
+   * Determine the effective line number and diff side for a diff line.
+   * - del lines → oldLineNum on LEFT (old-file side)
+   * - add/context lines → newLineNum on RIGHT (new-file side)
    */
-  function getCommentLine(parsed: ParsedDiffLine): number {
-    // For lines with a new-file line number, use it directly
-    if (parsed.newLineNum != null) return parsed.newLineNum;
-    // For deleted lines, use the old line number as fallback
-    if (parsed.oldLineNum != null) return parsed.oldLineNum;
-    return 0;
+  function getCommentAnchor(parsed: ParsedDiffLine): {
+    line: number;
+    side: 'LEFT' | 'RIGHT';
+  } {
+    if (parsed.type === 'del' && parsed.oldLineNum != null) {
+      return { line: parsed.oldLineNum, side: 'LEFT' };
+    }
+    if (parsed.newLineNum != null) {
+      return { line: parsed.newLineNum, side: 'RIGHT' };
+    }
+    if (parsed.oldLineNum != null) {
+      return { line: parsed.oldLineNum, side: 'LEFT' };
+    }
+    return { line: 0, side: 'RIGHT' };
   }
 
   const dimClass = chunk.approved ? 'opacity-50' : '';
@@ -422,8 +435,9 @@ function ChunkBlock({
         )}
         <div className="font-mono">
           {parsedLines.map((parsed, i) => {
-            const lineNum = getCommentLine(parsed);
-            const threadsForLine = threadsByLine.get(lineNum);
+            const anchor = getCommentAnchor(parsed);
+            const threadKey = `${anchor.line}:${anchor.side}`;
+            const threadsForLine = threadsByLine.get(threadKey);
             const showForm = commentFormIndex === i;
 
             return (
@@ -454,7 +468,7 @@ function ChunkBlock({
                 {showForm && (
                   <NewCommentForm
                     onAdd={async (body) => {
-                      await onAddComment(body, lineNum);
+                      await onAddComment(body, anchor.line, anchor.side);
                       setCommentFormIndex(null);
                     }}
                     onCancel={() => setCommentFormIndex(null)}
@@ -575,7 +589,12 @@ function FileBox({
   departingChunkIds: ReadonlySet<number>;
   onToggleApproved: (chunkId: number) => void;
   onChunkDeparted: (chunkId: number) => void;
-  onAddComment: (chunkId: number, body: string, line: number) => Promise<void>;
+  onAddComment: (
+    chunkId: number,
+    body: string,
+    line: number,
+    side: 'LEFT' | 'RIGHT',
+  ) => Promise<void>;
   onReplyComment: (chunkId: number, parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
@@ -606,7 +625,7 @@ function FileBox({
           <ChunkBlock
             chunk={chunk}
             onToggleApproved={() => onToggleApproved(chunk.id)}
-            onAddComment={(body, line) => onAddComment(chunk.id, body, line)}
+            onAddComment={(body, line, side) => onAddComment(chunk.id, body, line, side)}
             onReplyComment={(parentId, body) => onReplyComment(chunk.id, parentId, body)}
             onUpdateComment={onUpdateComment}
             onDeleteComment={onDeleteComment}

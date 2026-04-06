@@ -764,9 +764,9 @@ export function ReviewPage(): React.ReactElement {
   );
 
   const handleAddComment = useCallback(
-    async (chunkId: number, body: string, line: number): Promise<void> => {
+    async (chunkId: number, body: string, line: number, side: 'LEFT' | 'RIGHT'): Promise<void> => {
       await withErrorHandling(async () => {
-        const comment = await api.createComment({ chunkId, prId, body, line });
+        const comment = await api.createComment({ chunkId, prId, body, line, side });
         // Optimistically add the comment to local state
         setChunks((prev) => {
           if (!prev) return prev;
@@ -782,10 +782,11 @@ export function ReviewPage(): React.ReactElement {
   const handleReplyComment = useCallback(
     async (chunkId: number, parentId: number, body: string): Promise<void> => {
       await withErrorHandling(async () => {
-        // Find the parent to get line number
+        // Find the parent to get line number and side
         const parentComment = chunks?.flatMap((c) => c.comments).find((cm) => cm.id === parentId);
         const line = parentComment?.line ?? 0;
-        const comment = await api.createComment({ chunkId, prId, body, line, parentId });
+        const side = parentComment?.side ?? 'RIGHT';
+        const comment = await api.createComment({ chunkId, prId, body, line, side, parentId });
         setChunks((prev) => {
           if (!prev) return prev;
           return prev.map((c) =>

@@ -70,12 +70,16 @@ export interface ChunkMetadata {
 
 // ── Comment ─────────────────────────────────────────────────
 
+/** Which side of the diff the comment is anchored to. */
+export type DiffSide = 'LEFT' | 'RIGHT';
+
 export interface Comment {
   id: number;
   chunkId: number;
   prId: number;
   body: string;
   line: number;
+  side: DiffSide;
   parentId: number | null;
   author: string | null;
   ghCommentId: number | null;

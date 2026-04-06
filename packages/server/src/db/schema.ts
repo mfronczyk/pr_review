@@ -90,6 +90,7 @@ function createTables(db: Database.Database): void {
       pr_id         INTEGER NOT NULL REFERENCES prs(id) ON DELETE CASCADE,
       body          TEXT NOT NULL,
       line          INTEGER NOT NULL,
+      side          TEXT NOT NULL DEFAULT 'RIGHT',
       parent_id     INTEGER REFERENCES comments(id) ON DELETE CASCADE,
       author        TEXT,
       gh_comment_id INTEGER,
