@@ -154,7 +154,7 @@ export const ANALYSIS_SCHEMA = {
     pr_summary: {
       type: 'string',
       description:
-        'A thorough markdown-formatted summary of what was changed. Describe the areas of the codebase affected, the logical order of changes, and their purpose. Use markdown formatting (bold, lists, etc.) for readability.',
+        'A thorough markdown-formatted summary of what was changed. Describe the areas of the codebase affected, the logical order of changes, and their purpose. End with a "Key areas to focus on" section listing the most important files/functions/patterns the reviewer should scrutinize, with a brief reason for each. Use markdown formatting (bold, lists, etc.) for readability.',
     },
     tags: {
       type: 'array',
@@ -222,7 +222,7 @@ export const ANALYSIS_SCHEMA = {
           summary: {
             type: 'string',
             description:
-              'A markdown-formatted summary describing the specific code changes in this group, which files/functions were modified, the logical flow of changes, and their purpose.',
+              'A markdown-formatted summary describing the specific code changes in this group, which files/functions were modified, the logical flow of changes, and their purpose. If any chunks deserve extra attention, end with a note on what the reviewer should watch for.',
           },
         },
         required: ['tag', 'summary'],
@@ -320,7 +320,10 @@ Not every dimension applies to every chunk. Assign tags from multiple dimensions
 
 1. **PR Summary**: Write a thorough summary of what was changed. Describe the areas of the
    codebase affected, the logical order of changes, and their purpose. Cover both the "what"
-   and the "why".
+   and the "why". End with a **"Key areas to focus on"** section — a short bulleted list of
+   the most important files, functions, or patterns the reviewer should scrutinize closely,
+   with a brief reason for each (e.g. subtle logic, security-sensitive, easy to miss, complex
+   interaction between components).
 
 2. **Define Tags**: Define ALL tags you will use. Each tag needs a short name (kebab-case) and
    a brief description. Make functionality tags very specific to this PR — name them after the
@@ -334,7 +337,10 @@ Not every dimension applies to every chunk. Assign tags from multiple dimensions
 
 4. **Tag Summaries**: For EACH tag you assigned to at least one chunk, write a summary of a few
    sentences describing the specific code changes in this group, where they happened (which
-   files/functions), the logical flow of the changes, and their purpose.
+   files/functions), the logical flow of the changes, and their purpose. If any chunks in the
+   group deserve extra attention, end with a brief note on what specifically the reviewer should
+   watch for (e.g. edge cases, error handling gaps, naming inconsistencies, performance
+   implications, or tricky interactions with other parts of the codebase).
 
 ## Formatting
 
