@@ -8,8 +8,10 @@ import { Link, useParams } from 'react-router-dom';
 
 import * as api from '@/api';
 import { DiffViewer } from '@/components/DiffViewer';
+import { Markdown } from '@/components/Markdown';
 import { SubmitReviewDialog } from '@/components/SubmitReviewDialog';
 import { useAsync } from '@/hooks/use-async';
+import { getTagColor } from '@/tag-colors';
 import type { ChunkWithDetails, PrWithProgress, ReviewEvent, Tag } from '@pr-review/shared';
 
 // ── Types ───────────────────────────────────────────────────
@@ -348,7 +350,7 @@ const Sidebar = memo(function Sidebar({
                   <div className="flex items-center gap-2 min-w-0">
                     <span
                       className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
-                      style={{ backgroundColor: g.tag.color || '#6b7280' }}
+                      style={{ backgroundColor: getTagColor(g.tag.name) }}
                     />
                     <span className={`truncate ${allApproved ? 'text-fg-muted' : ''}`}>
                       {g.tag.name}
@@ -376,7 +378,7 @@ const Sidebar = memo(function Sidebar({
                   <ProgressDots
                     total={g.chunks.length}
                     approved={g.approvedCount}
-                    color={g.tag.color || '#6b7280'}
+                    color={getTagColor(g.tag.name)}
                   />
                 </div>
               </div>
@@ -574,10 +576,15 @@ export function ReviewPage(): React.ReactElement {
     }
   }, [fetchedChunks]);
 
-  const { data: tags } = useAsync(() => api.getTags(), []);
+  const { data: tags, reload: reloadTags } = useAsync(() => api.getTags(prId), [prId]);
 
   const { data: tagSummaries, reload: reloadTagSummaries } = useAsync(
     () => api.getTagSummaries(prId),
+    [prId],
+  );
+
+  const { data: prSummaryData, reload: reloadPrSummary } = useAsync(
+    () => api.getPrSummary(prId),
     [prId],
   );
 
@@ -591,8 +598,10 @@ export function ReviewPage(): React.ReactElement {
   const reload = useCallback(() => {
     reloadPr();
     reloadChunks();
+    reloadTags();
     reloadTagSummaries();
-  }, [reloadPr, reloadChunks, reloadTagSummaries]);
+    reloadPrSummary();
+  }, [reloadPr, reloadChunks, reloadTags, reloadTagSummaries, reloadPrSummary]);
 
   /** Wraps an async action with error handling. */
   const withErrorHandling = useCallback(async (fn: () => Promise<void>): Promise<void> => {
@@ -629,12 +638,16 @@ export function ReviewPage(): React.ReactElement {
     return Array.from(map.values()).sort((a, b) => b.chunks.length - a.chunks.length);
   }, [chunks, tags, tagSummaries]);
 
-  // Derive the summary for the currently selected group (if any)
-  const activeGroupSummary = useMemo((): string | null => {
-    if (!activeFilter) return null;
-    const group = groups.find((g) => g.tag.name === activeFilter.value);
-    return group?.summary ?? null;
-  }, [activeFilter, groups]);
+  // Derive the summary to show above the diff:
+  // - When a tag group is selected: show that group's summary
+  // - When no group is selected: show the overall PR summary
+  const activeSummary = useMemo((): string | null => {
+    if (activeFilter) {
+      const group = groups.find((g) => g.tag.name === activeFilter.value);
+      return group?.summary ?? null;
+    }
+    return prSummaryData?.summary ?? null;
+  }, [activeFilter, groups, prSummaryData]);
 
   // Get unique file list — scoped to the active tag filter so the sidebar
   // only shows files that contain chunks from the selected group.
@@ -995,12 +1008,6 @@ export function ReviewPage(): React.ReactElement {
           deletions={prWithLocalProgress.deletions}
         />
 
-        {activeGroupSummary && (
-          <div className="flex-shrink-0 border-b border-border-secondary bg-surface-secondary px-4 py-2">
-            <p className="text-xs text-fg-secondary">{activeGroupSummary}</p>
-          </div>
-        )}
-
         <div className="flex-1 overflow-hidden">
           {filteredChunks.length === 0 ? (
             <div className="py-12 text-center text-fg-muted">
@@ -1013,6 +1020,13 @@ export function ReviewPage(): React.ReactElement {
               chunks={filteredChunks}
               departingChunkIds={departingChunkIds}
               scrollToFile={scrollToFile}
+              headerContent={
+                activeSummary ? (
+                  <div className="mb-4 rounded-lg border border-border-secondary bg-surface-secondary px-4 py-2">
+                    <Markdown text={activeSummary} className="text-xs text-fg-secondary" />
+                  </div>
+                ) : undefined
+              }
               onToggleApproved={handleToggleApproved}
               onChunkDeparted={handleChunkDeparted}
               onScrollToFileDone={handleScrollToFileDone}

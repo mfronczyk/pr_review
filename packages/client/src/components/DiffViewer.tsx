@@ -11,6 +11,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { InlineThread, NewCommentForm } from '@/components/InlineComment';
+import { Markdown } from '@/components/Markdown';
 import { highlightLines } from '@/highlight';
 import type { ChunkWithDetails, Comment, CommentThread } from '@pr-review/shared';
 
@@ -20,6 +21,8 @@ interface DiffViewerProps {
   chunks: ChunkWithDetails[];
   departingChunkIds: ReadonlySet<number>;
   scrollToFile: string | null;
+  /** Optional content rendered at the top of the scroll area (scrolls away with the diff). */
+  headerContent?: React.ReactNode;
   onToggleApproved: (chunkId: number) => void;
   onChunkDeparted: (chunkId: number) => void;
   onScrollToFileDone: () => void;
@@ -73,23 +76,6 @@ function groupCommentsIntoThreads(comments: Comment[]): Map<number, CommentThrea
   return byLine;
 }
 
-// ── Tag Pill ────────────────────────────────────────────────
-
-function TagPill({ name, color }: { name: string; color: string }): React.ReactElement {
-  return (
-    <span
-      className="inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-      style={{
-        backgroundColor: `${color}22`,
-        color: color || '#9ca3af',
-        border: `1px solid ${color}44`,
-      }}
-    >
-      {name}
-    </span>
-  );
-}
-
 // ── Priority Badge ──────────────────────────────────────────
 
 function PriorityBadge({
@@ -118,10 +104,12 @@ function ChunkHeader({
   chunk,
   onToggle,
   isLast,
+  isFooter = false,
 }: {
   chunk: ChunkWithDetails;
   onToggle: () => void;
   isLast: boolean;
+  isFooter?: boolean;
 }): React.ReactElement {
   const commentCount = chunk.comments.length;
   return (
@@ -147,11 +135,9 @@ function ChunkHeader({
         L{chunk.startLine}–{chunk.endLine}
       </span>
 
-      {chunk.tags.map((t) => (
-        <TagPill key={t.id} name={t.name} color={t.color} />
-      ))}
-
-      {chunk.metadata?.priority && <PriorityBadge priority={chunk.metadata.priority} />}
+      {!isFooter && chunk.metadata?.priority && (
+        <PriorityBadge priority={chunk.metadata.priority} />
+      )}
 
       {commentCount > 0 && (
         <span className="text-xs text-fg-muted">
@@ -170,7 +156,7 @@ function ReviewNote({ note }: { note: string }): React.ReactElement {
   return (
     <div className="border-t border-border-secondary bg-diff-note-bg px-3 py-1 text-xs text-diff-note-fg">
       <span className="mr-1">⚡</span>
-      {note}
+      <Markdown text={note} compact className="inline" />
     </div>
   );
 }
@@ -480,7 +466,7 @@ function ChunkBlock({
 
       {/* Footer — mirrors ChunkHeader, dimmed when approved */}
       <div className={dimClass}>
-        <ChunkHeader chunk={chunk} onToggle={onToggleApproved} isLast={isLast} />
+        <ChunkHeader chunk={chunk} onToggle={onToggleApproved} isLast={isLast} isFooter />
       </div>
     </div>
   );
@@ -639,6 +625,7 @@ export const DiffViewer = memo(function DiffViewer({
   chunks,
   departingChunkIds,
   scrollToFile,
+  headerContent,
   onToggleApproved,
   onChunkDeparted,
   onScrollToFileDone,
@@ -728,6 +715,7 @@ export const DiffViewer = memo(function DiffViewer({
 
   return (
     <div ref={parentRef} className="h-full overflow-y-auto bg-surface-page p-4">
+      {headerContent}
       <div
         style={{
           height: `${virtualizer.getTotalSize()}px`,

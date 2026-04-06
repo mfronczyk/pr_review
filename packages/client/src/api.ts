@@ -81,6 +81,10 @@ export function getTagSummaries(prId: number): Promise<TagSummary[]> {
   return request(`/api/prs/${prId}/tag-summaries`);
 }
 
+export function getPrSummary(prId: number): Promise<{ summary: string | null }> {
+  return request(`/api/prs/${prId}/summary`);
+}
+
 export function submitReview(
   id: number,
   event: ReviewEvent,
@@ -136,8 +140,8 @@ export function bulkApprove(prId: number, tagId: number): Promise<{ approved: nu
   });
 }
 
-export function getTags(): Promise<Tag[]> {
-  return request('/api/tags');
+export function getTags(prId: number): Promise<Tag[]> {
+  return request(`/api/prs/${prId}/tags`);
 }
 
 // ── Comments ────────────────────────────────────────────────

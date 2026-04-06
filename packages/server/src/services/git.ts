@@ -99,6 +99,22 @@ export class GitService {
   }
 
   /**
+   * Get the commit log between two refs.
+   * Returns an array of "short-hash subject" strings, oldest first.
+   *
+   * @param baseRef - The base ref (e.g. 'origin/main')
+   * @param headRef - The head ref (e.g. 'pr-123')
+   * @returns Array of commit subject lines with short hashes
+   */
+  async getCommitLog(baseRef: string, headRef: string): Promise<string[]> {
+    const output = await this.git('log', '--format=%h %s', '--reverse', `${baseRef}...${headRef}`);
+    return output
+      .trim()
+      .split('\n')
+      .filter((line) => line.length > 0);
+  }
+
+  /**
    * Get the default branch name from the remote.
    */
   async getDefaultBranch(remote = 'origin'): Promise<string> {

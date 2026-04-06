@@ -155,7 +155,16 @@ describe('PrService.reconcileChunks', () => {
     const chunkId = chunks[0].id;
 
     // Add tag
-    const tagId = (db.prepare('SELECT id FROM tags LIMIT 1').get() as { id: number }).id;
+    db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
+      prId,
+      'test-tag',
+      'Test tag',
+    );
+    const tagId = (
+      db.prepare('SELECT id FROM tags WHERE name = ? AND pr_id = ?').get('test-tag', prId) as {
+        id: number;
+      }
+    ).id;
     db.prepare('INSERT INTO chunk_tags (chunk_id, tag_id) VALUES (?, ?)').run(chunkId, tagId);
 
     // Add metadata
@@ -203,7 +212,16 @@ describe('PrService.reconcileChunks', () => {
     const chunkId = chunks[0].id;
 
     // Add associated data
-    const tagId = (db.prepare('SELECT id FROM tags LIMIT 1').get() as { id: number }).id;
+    db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
+      prId,
+      'cascade-tag',
+      'Tag for cascade test',
+    );
+    const tagId = (
+      db.prepare('SELECT id FROM tags WHERE name = ? AND pr_id = ?').get('cascade-tag', prId) as {
+        id: number;
+      }
+    ).id;
     db.prepare('INSERT INTO chunk_tags (chunk_id, tag_id) VALUES (?, ?)').run(chunkId, tagId);
     db.prepare('INSERT INTO chunk_metadata (chunk_id, priority) VALUES (?, ?)').run(
       chunkId,

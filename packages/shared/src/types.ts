@@ -47,31 +47,15 @@ export type ReviewState = 'unapproved' | 'approved' | 'outdated';
 
 export interface Tag {
   id: number;
+  prId: number;
   name: string;
   description: string;
-  color: string;
-  isDefault: boolean;
 }
 
 export interface ChunkTag {
   chunkId: number;
   tagId: number;
 }
-
-export const DEFAULT_TAG_NAMES = [
-  'bug-fix',
-  'refactor',
-  'new-feature',
-  'style/formatting',
-  'tests',
-  'docs',
-  'config',
-  'security',
-  'performance',
-  'needs-discussion',
-] as const;
-
-export type DefaultTagName = (typeof DEFAULT_TAG_NAMES)[number];
 
 // ── Chunk Metadata (LLM-assigned) ──────────────────────────
 
@@ -132,10 +116,9 @@ export interface LlmRun {
 
 // ── LLM Analysis Output ────────────────────────────────────
 
-export interface LlmSuggestedTag {
+export interface LlmTagDefinition {
   name: string;
   description: string;
-  color: string;
 }
 
 export interface LlmChunkAssignment {
@@ -148,7 +131,7 @@ export interface LlmChunkAssignment {
 
 export interface LlmAnalysisResult {
   prSummary: string;
-  suggestedTags: LlmSuggestedTag[];
+  tags: LlmTagDefinition[];
   chunkAssignments: LlmChunkAssignment[];
   tagSummaries: LlmTagSummary[];
 }

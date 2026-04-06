@@ -25,7 +25,6 @@ export function initDatabase(dbPath: string): Database.Database {
 
   createTables(db);
   runMigrations(db);
-  seedDefaultTags(db);
 
   return db;
 }
@@ -66,10 +65,10 @@ function createTables(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS tags (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      name          TEXT NOT NULL UNIQUE,
+      pr_id         INTEGER NOT NULL REFERENCES prs(id) ON DELETE CASCADE,
+      name          TEXT NOT NULL,
       description   TEXT NOT NULL DEFAULT '',
-      color         TEXT NOT NULL DEFAULT '#6b7280',
-      is_default    INTEGER NOT NULL DEFAULT 0
+      UNIQUE(name, pr_id)
     );
 
     CREATE TABLE IF NOT EXISTS chunk_tags (
@@ -122,6 +121,7 @@ function createTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash);
     CREATE INDEX IF NOT EXISTS idx_chunk_tags_chunk_id ON chunk_tags(chunk_id);
     CREATE INDEX IF NOT EXISTS idx_chunk_tags_tag_id ON chunk_tags(tag_id);
+    CREATE INDEX IF NOT EXISTS idx_tags_pr_id ON tags(pr_id);
     CREATE INDEX IF NOT EXISTS idx_comments_chunk_id ON comments(chunk_id);
     CREATE INDEX IF NOT EXISTS idx_comments_pr_id ON comments(pr_id);
     CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON comments(parent_id);
@@ -141,40 +141,4 @@ function runMigrations(db: Database.Database): void {
   if (!hasGhNodeId) {
     db.exec('ALTER TABLE comments ADD COLUMN gh_node_id TEXT');
   }
-}
-
-const DEFAULT_TAGS: Array<{ name: string; description: string; color: string }> = [
-  { name: 'bug-fix', description: 'Fixes a bug or defect', color: '#ef4444' },
-  { name: 'refactor', description: 'Code restructuring without behavior change', color: '#8b5cf6' },
-  { name: 'new-feature', description: 'Adds new functionality', color: '#22c55e' },
-  {
-    name: 'style/formatting',
-    description: 'Code style or formatting changes',
-    color: '#f59e0b',
-  },
-  { name: 'tests', description: 'Test additions or modifications', color: '#06b6d4' },
-  { name: 'docs', description: 'Documentation changes', color: '#3b82f6' },
-  { name: 'config', description: 'Configuration or build changes', color: '#64748b' },
-  { name: 'security', description: 'Security-related changes', color: '#dc2626' },
-  { name: 'performance', description: 'Performance improvements', color: '#f97316' },
-  {
-    name: 'needs-discussion',
-    description: 'Requires team discussion or review',
-    color: '#ec4899',
-  },
-];
-
-function seedDefaultTags(db: Database.Database): void {
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO tags (name, description, color, is_default)
-    VALUES (@name, @description, @color, 1)
-  `);
-
-  const insertMany = db.transaction((tags: typeof DEFAULT_TAGS) => {
-    for (const tag of tags) {
-      insert.run(tag);
-    }
-  });
-
-  insertMany(DEFAULT_TAGS);
 }

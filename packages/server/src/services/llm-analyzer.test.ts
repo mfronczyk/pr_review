@@ -45,60 +45,109 @@ const SAMPLE_FILE_DIFFS: ParsedFileDiff[] = [
 ];
 
 describe('buildAnalysisPrompt', () => {
-  it('should include PR metadata', () => {
+  it('should include PR metadata and head branch', () => {
     const prompt = buildAnalysisPrompt(
       'Add inline types',
       'This PR adds type annotations.',
       'nateprewitt',
       'main',
+      'feature/add-types',
+      ['feat: add type annotations', 'fix: correct import order'],
       SAMPLE_FILE_DIFFS,
     );
 
     expect(prompt).toContain('Add inline types');
     expect(prompt).toContain('nateprewitt');
     expect(prompt).toContain('main');
+    expect(prompt).toContain('feature/add-types');
     expect(prompt).toContain('This PR adds type annotations.');
   });
 
+  it('should include commit messages', () => {
+    const prompt = buildAnalysisPrompt(
+      'Title',
+      'Body',
+      'author',
+      'main',
+      'feature/branch',
+      ['feat: add type annotations', 'fix: correct import order'],
+      SAMPLE_FILE_DIFFS,
+    );
+
+    expect(prompt).toContain('feat: add type annotations');
+    expect(prompt).toContain('fix: correct import order');
+  });
+
   it('should include all file paths', () => {
-    const prompt = buildAnalysisPrompt('Title', 'Body', 'author', 'main', SAMPLE_FILE_DIFFS);
+    const prompt = buildAnalysisPrompt(
+      'Title',
+      'Body',
+      'author',
+      'main',
+      'feature/branch',
+      [],
+      SAMPLE_FILE_DIFFS,
+    );
 
     expect(prompt).toContain('src/requests/utils.py');
     expect(prompt).toContain('src/requests/_types.py');
   });
 
   it('should include file status', () => {
-    const prompt = buildAnalysisPrompt('Title', 'Body', 'author', 'main', SAMPLE_FILE_DIFFS);
+    const prompt = buildAnalysisPrompt(
+      'Title',
+      'Body',
+      'author',
+      'main',
+      'feature/branch',
+      [],
+      SAMPLE_FILE_DIFFS,
+    );
 
     expect(prompt).toContain('MODIFIED src/requests/utils.py');
     expect(prompt).toContain('ADDED src/requests/_types.py');
   });
 
   it('should include chunk indices and line ranges', () => {
-    const prompt = buildAnalysisPrompt('Title', 'Body', 'author', 'main', SAMPLE_FILE_DIFFS);
+    const prompt = buildAnalysisPrompt(
+      'Title',
+      'Body',
+      'author',
+      'main',
+      'feature/branch',
+      [],
+      SAMPLE_FILE_DIFFS,
+    );
 
     expect(prompt).toContain('chunk 0: lines 10-16');
     expect(prompt).toContain('chunk 1: lines 46-52');
   });
 
   it('should include diff content', () => {
-    const prompt = buildAnalysisPrompt('Title', 'Body', 'author', 'main', SAMPLE_FILE_DIFFS);
+    const prompt = buildAnalysisPrompt(
+      'Title',
+      'Body',
+      'author',
+      'main',
+      'feature/branch',
+      [],
+      SAMPLE_FILE_DIFFS,
+    );
 
     expect(prompt).toContain('+from typing import Optional');
     expect(prompt).toContain('+"""Types module."""');
   });
 
-  it('should list default tags', () => {
-    const prompt = buildAnalysisPrompt('Title', 'Body', 'author', 'main', SAMPLE_FILE_DIFFS);
-
-    expect(prompt).toContain('bug-fix');
-    expect(prompt).toContain('refactor');
-    expect(prompt).toContain('new-feature');
-    expect(prompt).toContain('needs-discussion');
-  });
-
   it('should handle empty body', () => {
-    const prompt = buildAnalysisPrompt('Title', '', 'author', 'main', SAMPLE_FILE_DIFFS);
+    const prompt = buildAnalysisPrompt(
+      'Title',
+      '',
+      'author',
+      'main',
+      'feature/branch',
+      [],
+      SAMPLE_FILE_DIFFS,
+    );
 
     expect(prompt).toContain('(no description)');
   });
@@ -113,15 +162,31 @@ describe('buildAnalysisPrompt', () => {
       },
     ];
 
-    const prompt = buildAnalysisPrompt('Title', 'Body', 'author', 'main', diffs);
+    const prompt = buildAnalysisPrompt(
+      'Title',
+      'Body',
+      'author',
+      'main',
+      'feature/branch',
+      [],
+      diffs,
+    );
     expect(prompt).toContain('RENAMED new_name.py (was: old_name.py)');
   });
 
-  it('should instruct the LLM to generate tag summaries', () => {
-    const prompt = buildAnalysisPrompt('Title', 'Body', 'author', 'main', SAMPLE_FILE_DIFFS);
+  it('should include tag taxonomy dimensions', () => {
+    const prompt = buildAnalysisPrompt(
+      'Title',
+      'Body',
+      'author',
+      'main',
+      'feature/branch',
+      [],
+      SAMPLE_FILE_DIFFS,
+    );
 
-    expect(prompt).toContain('tag group');
-    expect(prompt).toContain('contextual summary');
+    expect(prompt).toContain('Layer');
+    expect(prompt).toContain('Functionality');
   });
 });
 
@@ -131,7 +196,7 @@ describe('ANALYSIS_SCHEMA', () => {
 
     expect(ANALYSIS_SCHEMA.type).toBe('object');
     expect(ANALYSIS_SCHEMA.required).toContain('pr_summary');
-    expect(ANALYSIS_SCHEMA.required).toContain('suggested_tags');
+    expect(ANALYSIS_SCHEMA.required).toContain('tags');
     expect(ANALYSIS_SCHEMA.required).toContain('chunk_assignments');
     expect(ANALYSIS_SCHEMA.required).toContain('tag_summaries');
     expect(ANALYSIS_SCHEMA.properties.chunk_assignments.type).toBe('array');

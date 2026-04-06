@@ -25,33 +25,60 @@ describe('Database Schema', () => {
     expect(tableNames).toContain('llm_runs');
   });
 
-  it('should seed default tags', () => {
-    const tags = db.prepare('SELECT * FROM tags WHERE is_default = 1').all() as Array<{
-      name: string;
-      is_default: number;
-    }>;
+  it('should require pr_id for tags and enforce UNIQUE(name, pr_id)', () => {
+    // Insert a PR
+    db.prepare(
+      "INSERT INTO prs (owner, repo, number, gh_host) VALUES ('org', 'repo', 1, 'github.com')",
+    ).run();
+    const pr = db.prepare('SELECT id FROM prs WHERE number = 1').get() as { id: number };
 
-    expect(tags).toHaveLength(10);
+    // Insert a tag with pr_id
+    db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
+      pr.id,
+      'my-tag',
+      'desc',
+    );
 
-    const tagNames = tags.map((t) => t.name);
-    expect(tagNames).toContain('bug-fix');
-    expect(tagNames).toContain('refactor');
-    expect(tagNames).toContain('new-feature');
-    expect(tagNames).toContain('tests');
-    expect(tagNames).toContain('docs');
-    expect(tagNames).toContain('config');
-    expect(tagNames).toContain('security');
-    expect(tagNames).toContain('performance');
-    expect(tagNames).toContain('needs-discussion');
-    expect(tagNames).toContain('style/formatting');
+    // Duplicate name for same PR should fail
+    expect(() => {
+      db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
+        pr.id,
+        'my-tag',
+        'other desc',
+      );
+    }).toThrow();
+
+    // Same name for a different PR should succeed
+    db.prepare(
+      "INSERT INTO prs (owner, repo, number, gh_host) VALUES ('org', 'repo', 2, 'github.com')",
+    ).run();
+    const pr2 = db.prepare('SELECT id FROM prs WHERE number = 2').get() as { id: number };
+
+    expect(() => {
+      db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
+        pr2.id,
+        'my-tag',
+        'desc',
+      );
+    }).not.toThrow();
   });
 
-  it('should not duplicate default tags on re-initialization', () => {
-    // Run seed again
-    initDatabase(':memory:');
+  it('should cascade delete tags when PR is deleted', () => {
+    db.prepare(
+      "INSERT INTO prs (owner, repo, number, gh_host) VALUES ('org', 'repo', 10, 'github.com')",
+    ).run();
+    const pr = db.prepare('SELECT id FROM prs WHERE number = 10').get() as { id: number };
 
-    const tags = db.prepare('SELECT * FROM tags WHERE is_default = 1').all();
-    expect(tags).toHaveLength(10);
+    db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
+      pr.id,
+      'some-tag',
+      'desc',
+    );
+
+    db.prepare('DELETE FROM prs WHERE id = ?').run(pr.id);
+
+    const tags = db.prepare('SELECT * FROM tags WHERE pr_id = ?').all(pr.id);
+    expect(tags).toHaveLength(0);
   });
 
   it('should enforce foreign key constraints', () => {

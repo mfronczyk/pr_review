@@ -109,12 +109,12 @@ export function createChunkRoutes(db: Database.Database): Router {
   });
 
   /**
-   * GET /api/tags
-   * Get all tags.
+   * GET /api/prs/:prId/tags
+   * Get all tags for a PR.
    */
-  router.get('/tags', (_req, res) => {
+  router.get('/prs/:prId/tags', (req, res) => {
     try {
-      const tags = chunkService.getAllTags();
+      const tags = chunkService.getTagsForPr(Number(req.params.prId));
       res.json(tags);
     } catch (error) {
       res.status(500).json({ error: errorMessage(error) });

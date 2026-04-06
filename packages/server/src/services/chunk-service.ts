@@ -119,12 +119,12 @@ export class ChunkService {
   }
 
   /**
-   * Get all tags.
+   * Get all tags for a specific PR.
    */
-  getAllTags(): Tag[] {
+  getTagsForPr(prId: number): Tag[] {
     const rows = this.db
-      .prepare('SELECT * FROM tags ORDER BY is_default DESC, name')
-      .all() as TagDbRow[];
+      .prepare('SELECT * FROM tags WHERE pr_id = ? ORDER BY name')
+      .all(prId) as TagDbRow[];
     return rows.map(mapTagRow);
   }
 
@@ -232,10 +232,9 @@ interface ChunkDbRow {
 
 interface TagDbRow {
   id: number;
+  pr_id: number;
   name: string;
   description: string;
-  color: string;
-  is_default: number;
 }
 
 interface MetadataDbRow {
@@ -280,10 +279,9 @@ function mapChunkRow(row: ChunkDbRow): Chunk {
 function mapTagRow(row: TagDbRow): Tag {
   return {
     id: row.id,
+    prId: row.pr_id,
     name: row.name,
     description: row.description,
-    color: row.color,
-    isDefault: Boolean(row.is_default),
   };
 }
 

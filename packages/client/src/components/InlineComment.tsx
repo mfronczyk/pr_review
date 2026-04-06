@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 
+import { Markdown } from '@/components/Markdown';
 import type { Comment, CommentThread } from '@pr-review/shared';
 
 interface InlineThreadProps {
@@ -120,7 +121,7 @@ function CommentItem({
           </span>
           {comment.publishedAt && <span className="text-[10px] text-success-fg">Published</span>}
         </div>
-        <p className="whitespace-pre-wrap text-xs text-fg-secondary">{comment.body}</p>
+        <Markdown variant="comment" text={comment.body} />
       </div>
       {isLocal && !comment.publishedAt && (
         <div className="hidden flex-shrink-0 gap-1 group-hover:flex">

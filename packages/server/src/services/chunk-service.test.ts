@@ -74,9 +74,16 @@ describe('ChunkService', () => {
   describe('bulkApproveByTag', () => {
     it('should mark all chunks with a tag as approved', () => {
       const chunks = service.getChunksForPr(prId);
-      const tags = service.getAllTags();
-      const refactorTag = tags.find((t) => t.name === 'refactor');
-      if (!refactorTag) throw new Error('refactor tag not found');
+
+      // Create a tag for this PR
+      db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
+        prId,
+        'refactor',
+        'Refactoring changes',
+      );
+      const refactorTag = db
+        .prepare("SELECT id FROM tags WHERE name = 'refactor' AND pr_id = ?")
+        .get(prId) as { id: number };
 
       // Tag two chunks with 'refactor'
       service.addTagsToChunk(chunks[0].id, [refactorTag.id]);
@@ -94,16 +101,46 @@ describe('ChunkService', () => {
   });
 
   describe('tag operations', () => {
-    it('should get all default tags', () => {
-      const tags = service.getAllTags();
-      expect(tags.length).toBeGreaterThanOrEqual(10);
-      expect(tags.some((t) => t.name === 'bug-fix')).toBe(true);
+    let tagIds: number[];
+
+    beforeEach(() => {
+      // Create PR-specific tags
+      tagIds = [];
+      for (const [name, desc] of [
+        ['api-changes', 'API endpoint changes'],
+        ['validation', 'Input validation updates'],
+        ['error-handling', 'Error handling improvements'],
+      ]) {
+        db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
+          prId,
+          name,
+          desc,
+        );
+        const row = db
+          .prepare('SELECT id FROM tags WHERE name = ? AND pr_id = ?')
+          .get(name, prId) as { id: number };
+        tagIds.push(row.id);
+      }
+    });
+
+    it('should get tags for a PR', () => {
+      const tags = service.getTagsForPr(prId);
+      expect(tags).toHaveLength(3);
+      expect(tags.some((t) => t.name === 'api-changes')).toBe(true);
+    });
+
+    it('should return empty array for PR with no tags', () => {
+      db.prepare(
+        "INSERT INTO prs (owner, repo, number, gh_host) VALUES ('org', 'repo', 9999, 'github.com')",
+      ).run();
+      const otherPr = db.prepare('SELECT id FROM prs WHERE number = 9999').get() as { id: number };
+      const tags = service.getTagsForPr(otherPr.id);
+      expect(tags).toHaveLength(0);
     });
 
     it('should add tags to a chunk', () => {
       const chunks = service.getChunksForPr(prId);
-      const tags = service.getAllTags();
-      service.addTagsToChunk(chunks[0].id, [tags[0].id, tags[1].id]);
+      service.addTagsToChunk(chunks[0].id, [tagIds[0], tagIds[1]]);
 
       const updated = service.getChunk(chunks[0].id);
       expect(updated?.tags).toHaveLength(2);
@@ -111,9 +148,8 @@ describe('ChunkService', () => {
 
     it('should not duplicate tags', () => {
       const chunks = service.getChunksForPr(prId);
-      const tags = service.getAllTags();
-      service.addTagsToChunk(chunks[0].id, [tags[0].id]);
-      service.addTagsToChunk(chunks[0].id, [tags[0].id]);
+      service.addTagsToChunk(chunks[0].id, [tagIds[0]]);
+      service.addTagsToChunk(chunks[0].id, [tagIds[0]]);
 
       const updated = service.getChunk(chunks[0].id);
       expect(updated?.tags).toHaveLength(1);
@@ -121,24 +157,22 @@ describe('ChunkService', () => {
 
     it('should remove a tag from a chunk', () => {
       const chunks = service.getChunksForPr(prId);
-      const tags = service.getAllTags();
-      service.addTagsToChunk(chunks[0].id, [tags[0].id, tags[1].id]);
-      service.removeTagFromChunk(chunks[0].id, tags[0].id);
+      service.addTagsToChunk(chunks[0].id, [tagIds[0], tagIds[1]]);
+      service.removeTagFromChunk(chunks[0].id, tagIds[0]);
 
       const updated = service.getChunk(chunks[0].id);
       expect(updated?.tags).toHaveLength(1);
-      expect(updated?.tags[0].id).toBe(tags[1].id);
+      expect(updated?.tags[0].id).toBe(tagIds[1]);
     });
 
     it('should replace all tags on a chunk', () => {
       const chunks = service.getChunksForPr(prId);
-      const tags = service.getAllTags();
-      service.addTagsToChunk(chunks[0].id, [tags[0].id, tags[1].id]);
-      service.setChunkTags(chunks[0].id, [tags[2].id]);
+      service.addTagsToChunk(chunks[0].id, [tagIds[0], tagIds[1]]);
+      service.setChunkTags(chunks[0].id, [tagIds[2]]);
 
       const updated = service.getChunk(chunks[0].id);
       expect(updated?.tags).toHaveLength(1);
-      expect(updated?.tags[0].id).toBe(tags[2].id);
+      expect(updated?.tags[0].id).toBe(tagIds[2]);
     });
   });
 

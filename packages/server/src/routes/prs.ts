@@ -158,6 +158,9 @@ export function createPrRoutes(
       const rawDiff = await git.diff(baseRef, localBranch);
       const fileDiffs = parseDiff(rawDiff);
 
+      // Get commit messages for additional context
+      const commitMessages = await git.getCommitLog(baseRef, localBranch);
+
       const result = await analyzePr(
         { db, repoPath },
         prId,
@@ -165,6 +168,8 @@ export function createPrRoutes(
         pr.body,
         pr.author,
         pr.baseRef,
+        pr.headRef,
+        commitMessages,
         fileDiffs,
         modelInfo,
       );
@@ -198,6 +203,27 @@ export function createPrRoutes(
       }));
 
       res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /**
+   * GET /api/prs/:id/summary
+   * Get the LLM-generated PR summary from the most recent completed analysis run.
+   */
+  router.get('/:id/summary', (req, res) => {
+    try {
+      const prId = Number(req.params.id);
+      const row = db
+        .prepare(
+          `SELECT summary FROM llm_runs
+           WHERE pr_id = ? AND status = 'completed' AND summary IS NOT NULL
+           ORDER BY finished_at DESC LIMIT 1`,
+        )
+        .get(prId) as { summary: string } | undefined;
+
+      res.json({ summary: row?.summary ?? null });
     } catch (error) {
       res.status(500).json({ error: errorMessage(error) });
     }
