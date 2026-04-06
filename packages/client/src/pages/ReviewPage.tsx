@@ -857,9 +857,24 @@ export function ReviewPage(): React.ReactElement {
             comments: c.comments.map((cm) => (cm.id === commentId ? resolved : cm)),
           }));
         });
+
+        // If resolving this thread will cause an approved chunk to be hidden
+        // (no remaining unresolved threads), trigger the departure animation
+        // so it fades out instead of vanishing and causing a scroll-to-top.
+        if (hideApproved) {
+          const chunk = chunks?.find((c) => c.comments.some((cm) => cm.id === commentId));
+          if (chunk?.approved) {
+            const remainingUnresolved = chunk.comments.filter(
+              (cm) => cm.parentId === null && !cm.resolved && cm.id !== commentId,
+            );
+            if (remainingUnresolved.length === 0) {
+              setDepartingChunkIds((prev) => new Set(prev).add(chunk.id));
+            }
+          }
+        }
       });
     },
-    [withErrorHandling],
+    [chunks, hideApproved, withErrorHandling],
   );
 
   const handleUnresolveThread = useCallback(
