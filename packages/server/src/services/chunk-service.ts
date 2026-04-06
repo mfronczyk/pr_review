@@ -3,6 +3,7 @@ import type {
   ChunkMetadata,
   ChunkWithDetails,
   Comment,
+  DiffSide,
   Priority,
   Tag,
 } from '@pr-review/shared';
@@ -250,6 +251,7 @@ interface CommentDbRow {
   pr_id: number;
   body: string;
   line: number;
+  side: string;
   parent_id: number | null;
   author: string | null;
   gh_comment_id: number | null;
@@ -301,6 +303,7 @@ function mapCommentRow(row: CommentDbRow): Comment {
     prId: row.pr_id,
     body: row.body,
     line: row.line,
+    side: (row.side === 'LEFT' ? 'LEFT' : 'RIGHT') as DiffSide,
     parentId: row.parent_id,
     author: row.author,
     ghCommentId: row.gh_comment_id,

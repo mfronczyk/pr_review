@@ -48,6 +48,28 @@ describe('ChunkService', () => {
       expect(chunks[0].metadata).toBeNull();
       expect(chunks[0].comments).toEqual([]);
     });
+
+    it('should include comment side field for proper thread grouping', () => {
+      const chunks = service.getChunksForPr(prId);
+      const chunkId = chunks[0].id;
+
+      // Insert a LEFT comment (anchored to a deleted line)
+      db.prepare(
+        'INSERT INTO comments (chunk_id, pr_id, body, line, side) VALUES (?, ?, ?, ?, ?)',
+      ).run(chunkId, prId, 'Issue on old line', 12, 'LEFT');
+
+      // Insert a RIGHT comment (anchored to an added/context line)
+      db.prepare(
+        'INSERT INTO comments (chunk_id, pr_id, body, line, side) VALUES (?, ?, ?, ?, ?)',
+      ).run(chunkId, prId, 'Looks good on new line', 15, 'RIGHT');
+
+      const updated = service.getChunk(chunkId);
+      expect(updated?.comments).toHaveLength(2);
+      expect(updated?.comments[0].side).toBe('LEFT');
+      expect(updated?.comments[0].line).toBe(12);
+      expect(updated?.comments[1].side).toBe('RIGHT');
+      expect(updated?.comments[1].line).toBe(15);
+    });
   });
 
   describe('toggleApproved', () => {
