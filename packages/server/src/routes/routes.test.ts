@@ -8,10 +8,15 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type Database from 'better-sqlite3';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { initDatabase } from '../db/schema.js';
 import { createApp } from '../index.js';
+import { getOctokit } from '../services/github-client.js';
+
+vi.mock('../services/github-client.js', () => ({
+  getOctokit: vi.fn(),
+}));
 
 let db: Database.Database;
 let app: ReturnType<typeof createApp>;
@@ -258,5 +263,73 @@ describe('Comment routes', () => {
       .post('/api/comments')
       .send({ chunkId: 1, prId: 1, body: 'No line' });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('Submit review routes', () => {
+  it('POST /api/prs/:id/submit-review should return 400 for invalid event', async () => {
+    const res = await request(app)
+      .post('/api/prs/1/submit-review')
+      .send({ event: 'REQUEST_CHANGES' });
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty('error');
+  });
+
+  it('POST /api/prs/:id/submit-review should return 400 for missing event', async () => {
+    const res = await request(app).post('/api/prs/1/submit-review').send({ body: 'some body' });
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty('error');
+  });
+
+  it('POST /api/prs/:id/submit-review should return 404 for non-existent PR', async () => {
+    const res = await request(app).post('/api/prs/999/submit-review').send({ event: 'APPROVE' });
+    expect(res.status).toBe(404);
+    expect(res.body).toHaveProperty('error');
+  });
+
+  it('POST /api/prs/:id/submit-review should submit APPROVE review', async () => {
+    const mockCreateReview = vi.fn().mockResolvedValue({
+      data: {
+        id: 200,
+        state: 'APPROVED',
+        submitted_at: '2026-04-06T12:00:00Z',
+      },
+    });
+
+    vi.mocked(getOctokit).mockResolvedValue({
+      pulls: { createReview: mockCreateReview },
+    } as never);
+
+    const res = await request(app)
+      .post('/api/prs/1/submit-review')
+      .send({ event: 'APPROVE', body: 'LGTM' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      id: 200,
+      state: 'APPROVED',
+      submittedAt: '2026-04-06T12:00:00Z',
+    });
+  });
+
+  it('POST /api/prs/:id/submit-review should submit COMMENT review', async () => {
+    const mockCreateReview = vi.fn().mockResolvedValue({
+      data: {
+        id: 201,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-06T12:00:00Z',
+      },
+    });
+
+    vi.mocked(getOctokit).mockResolvedValue({
+      pulls: { createReview: mockCreateReview },
+    } as never);
+
+    const res = await request(app).post('/api/prs/1/submit-review').send({ event: 'COMMENT' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      id: 201,
+      state: 'COMMENTED',
+      submittedAt: '2026-04-06T12:00:00Z',
+    });
   });
 });

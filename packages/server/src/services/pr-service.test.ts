@@ -1,17 +1,22 @@
 /**
- * Unit tests for PrService.reconcileChunks – verifies chunk reconciliation
+ * Unit tests for PrService – verifies chunk reconciliation
  * preserves approval state, tags, metadata, and comments for unchanged chunks
- * while correctly adding/removing changed chunks.
+ * while correctly adding/removing changed chunks, and tests review submission.
  */
 
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type Database from 'better-sqlite3';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { initDatabase } from '../db/schema.js';
+import { getOctokit } from './github-client.js';
 import { PrService } from './pr-service.js';
+
+vi.mock('./github-client.js', () => ({
+  getOctokit: vi.fn(),
+}));
 
 interface ChunkInput {
   filePath: string;
@@ -340,5 +345,71 @@ describe('PrService.reconcileChunks', () => {
     // Confirm B is gone
     const bExists = db.prepare('SELECT id FROM chunks WHERE id = ?').get(idB);
     expect(bExists).toBeUndefined();
+  });
+});
+
+describe('PrService.submitReview', () => {
+  it('should submit an APPROVE review', async () => {
+    const mockCreateReview = vi.fn().mockResolvedValue({
+      data: {
+        id: 100,
+        state: 'APPROVED',
+        submitted_at: '2026-04-06T10:00:00Z',
+      },
+    });
+
+    vi.mocked(getOctokit).mockResolvedValue({
+      pulls: { createReview: mockCreateReview },
+    } as never);
+
+    const result = await service.submitReview(prId, 'APPROVE', 'Looks good!');
+
+    expect(result).toEqual({
+      id: 100,
+      state: 'APPROVED',
+      submittedAt: '2026-04-06T10:00:00Z',
+    });
+
+    expect(mockCreateReview).toHaveBeenCalledWith({
+      owner: 'test',
+      repo: 'repo',
+      pull_number: 1,
+      event: 'APPROVE',
+      body: 'Looks good!',
+    });
+  });
+
+  it('should submit a COMMENT review without body', async () => {
+    const mockCreateReview = vi.fn().mockResolvedValue({
+      data: {
+        id: 101,
+        state: 'COMMENTED',
+        submitted_at: '2026-04-06T11:00:00Z',
+      },
+    });
+
+    vi.mocked(getOctokit).mockResolvedValue({
+      pulls: { createReview: mockCreateReview },
+    } as never);
+
+    const result = await service.submitReview(prId, 'COMMENT');
+
+    expect(result).toEqual({
+      id: 101,
+      state: 'COMMENTED',
+      submittedAt: '2026-04-06T11:00:00Z',
+    });
+
+    expect(mockCreateReview).toHaveBeenCalledWith({
+      owner: 'test',
+      repo: 'repo',
+      pull_number: 1,
+      event: 'COMMENT',
+      body: undefined,
+    });
+  });
+
+  it('should throw for non-existent PR', async () => {
+    await expect(service.submitReview(999, 'APPROVE')).rejects.toThrow('PR not found: 999');
   });
 });

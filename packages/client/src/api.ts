@@ -11,6 +11,8 @@ import type {
   LlmModelInfo,
   PrWithProgress,
   PullRequest,
+  ReviewEvent,
+  SubmitReviewResponse,
   SyncResult,
   Tag,
 } from '@pr-review/shared';
@@ -65,6 +67,17 @@ export function syncPr(id: number): Promise<SyncResult> {
 
 export function analyzePr(id: number): Promise<LlmAnalysisResult> {
   return request(`/api/prs/${id}/analyze`, { method: 'POST' });
+}
+
+export function submitReview(
+  id: number,
+  event: ReviewEvent,
+  body?: string,
+): Promise<SubmitReviewResponse> {
+  return request(`/api/prs/${id}/submit-review`, {
+    method: 'POST',
+    body: JSON.stringify({ event, body: body || undefined }),
+  });
 }
 
 // ── LLM ─────────────────────────────────────────────────────

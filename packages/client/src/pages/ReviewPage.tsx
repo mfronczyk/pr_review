@@ -8,8 +8,9 @@ import { Link, useParams } from 'react-router-dom';
 
 import * as api from '@/api';
 import { DiffViewer } from '@/components/DiffViewer';
+import { SubmitReviewDialog } from '@/components/SubmitReviewDialog';
 import { useAsync } from '@/hooks/use-async';
-import type { ChunkWithDetails, PrWithProgress, Tag } from '@pr-review/shared';
+import type { ChunkWithDetails, PrWithProgress, ReviewEvent, Tag } from '@pr-review/shared';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -422,6 +423,7 @@ function Toolbar({
   onSync,
   onAnalyze,
   onPublishAll,
+  onSubmitReview,
   syncing,
   analyzing,
   unpublishedCount,
@@ -434,6 +436,7 @@ function Toolbar({
   onSync: () => void;
   onAnalyze: () => void;
   onPublishAll: () => Promise<void>;
+  onSubmitReview: () => void;
   syncing: boolean;
   analyzing: boolean;
   unpublishedCount: number;
@@ -487,6 +490,13 @@ function Toolbar({
         )}
         <button
           type="button"
+          onClick={onSubmitReview}
+          className="rounded-md bg-green-700 px-3 py-1 text-xs text-white hover:bg-green-600 disabled:opacity-50"
+        >
+          Submit Review
+        </button>
+        <button
+          type="button"
           onClick={onSync}
           disabled={syncing}
           className="rounded-md border border-border-primary bg-surface-secondary px-3 py-1 text-xs text-fg-secondary hover:bg-surface-tertiary disabled:opacity-50"
@@ -522,6 +532,8 @@ export function ReviewPage(): React.ReactElement {
   const [showUnresolved, setShowUnresolved] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
+  const [submittingReview, setSubmittingReview] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [departingChunkIds, setDepartingChunkIds] = useState<Set<number>>(new Set());
 
@@ -839,6 +851,21 @@ export function ReviewPage(): React.ReactElement {
     });
   }
 
+  const handleSubmitReview = useCallback(
+    async (event: ReviewEvent, body?: string): Promise<void> => {
+      setSubmittingReview(true);
+      try {
+        await withErrorHandling(async () => {
+          await api.submitReview(prId, event, body);
+          setReviewDialogOpen(false);
+        });
+      } finally {
+        setSubmittingReview(false);
+      }
+    },
+    [prId, withErrorHandling],
+  );
+
   // Count actual unpublished comments (not chunks with unpublished comments)
   const unpublishedCount = useMemo(() => {
     if (!chunks) return 0;
@@ -925,6 +952,7 @@ export function ReviewPage(): React.ReactElement {
           onSync={handleSync}
           onAnalyze={handleAnalyze}
           onPublishAll={handlePublishAll}
+          onSubmitReview={() => setReviewDialogOpen(true)}
           syncing={syncing}
           analyzing={analyzing}
           unpublishedCount={unpublishedCount}
@@ -957,6 +985,13 @@ export function ReviewPage(): React.ReactElement {
           )}
         </div>
       </div>
+
+      <SubmitReviewDialog
+        isOpen={reviewDialogOpen}
+        onClose={() => setReviewDialogOpen(false)}
+        onSubmit={handleSubmitReview}
+        isSubmitting={submittingReview}
+      />
     </div>
   );
 }

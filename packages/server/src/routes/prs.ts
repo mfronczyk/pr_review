@@ -1,4 +1,10 @@
-import type { AddPrRequest, LlmModelInfo, PrWithProgress } from '@pr-review/shared';
+import type {
+  AddPrRequest,
+  LlmModelInfo,
+  PrWithProgress,
+  ReviewEvent,
+  SubmitReviewRequest,
+} from '@pr-review/shared';
 import type Database from 'better-sqlite3';
 import { Router } from 'express';
 import { ChunkService } from '../services/chunk-service.js';
@@ -159,6 +165,36 @@ export function createPrRoutes(
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /**
+   * POST /api/prs/:id/submit-review
+   * Submit a review on the PR (APPROVE or COMMENT).
+   */
+  router.post('/:id/submit-review', async (req, res) => {
+    const prId = Number(req.params.id);
+    try {
+      const { event, body } = req.body as SubmitReviewRequest;
+
+      const validEvents: ReviewEvent[] = ['APPROVE', 'COMMENT'];
+      if (!event || !validEvents.includes(event)) {
+        res.status(400).json({ error: 'event must be "APPROVE" or "COMMENT"' });
+        return;
+      }
+
+      console.log(`[prs] Submitting review for PR #${prId} (${event})`);
+      const result = await prService.submitReview(prId, event, body);
+      console.log(`[prs] Review submitted for PR #${prId}: ${result.state}`);
+      res.json(result);
+    } catch (error) {
+      const message = errorMessage(error);
+      if (message.includes('PR not found')) {
+        res.status(404).json({ error: message });
+        return;
+      }
+      console.error(`[prs] Failed to submit review for PR #${prId}: ${message}`);
+      res.status(500).json({ error: message });
     }
   });
 

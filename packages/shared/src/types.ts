@@ -177,3 +177,18 @@ export interface SyncResult {
   updated: number;
   outdated: number;
 }
+
+// ── Review Submission ──────────────────────────────────────
+
+export type ReviewEvent = 'APPROVE' | 'COMMENT';
+
+export interface SubmitReviewRequest {
+  event: ReviewEvent;
+  body?: string;
+}
+
+export interface SubmitReviewResponse {
+  id: number;
+  state: string;
+  submittedAt: string;
+}
