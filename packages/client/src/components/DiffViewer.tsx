@@ -725,16 +725,19 @@ export const DiffViewer = memo(function DiffViewer({
     overscan: 3,
   });
 
-  // Scroll to top when the set of file groups changes (e.g. switching tag groups)
-  const prevFileGroupsRef = useRef(fileGroups);
+  // Scroll to top when the set of file groups changes (e.g. switching tag groups).
+  // Compare by file-path list so that approval toggles (which create new fileGroups
+  // references but keep the same files) don't trigger a scroll reset.
+  const fileGroupKey = useMemo(() => fileGroups.map((g) => g.filePath).join('\0'), [fileGroups]);
+  const prevFileGroupKeyRef = useRef(fileGroupKey);
   useEffect(() => {
-    if (prevFileGroupsRef.current !== fileGroups) {
-      prevFileGroupsRef.current = fileGroups;
+    if (prevFileGroupKeyRef.current !== fileGroupKey) {
+      prevFileGroupKeyRef.current = fileGroupKey;
       if (parentRef.current) {
         parentRef.current.scrollTop = 0;
       }
     }
-  }, [fileGroups]);
+  }, [fileGroupKey]);
 
   // Scroll to a specific file group when requested.
   // We manually calculate the offset to account for the header content above the virtualized area.
