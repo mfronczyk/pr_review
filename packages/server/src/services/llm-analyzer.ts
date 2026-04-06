@@ -233,39 +233,11 @@ export const ANALYSIS_SCHEMA = {
 } as const;
 
 /**
- * Build the analysis prompt for the LLM.
+ * Build the system prompt — role, taxonomy, instructions, and formatting guidance.
+ * This overrides OpenCode's default system prompt so the LLM acts as a PR reviewer,
+ * not a coding agent.
  */
-export function buildAnalysisPrompt(
-  prTitle: string,
-  prBody: string,
-  prAuthor: string,
-  baseBranch: string,
-  headBranch: string,
-  commitMessages: string[],
-  fileDiffs: ParsedFileDiff[],
-): string {
-  const chunkSummary = fileDiffs
-    .map((fd) => {
-      const chunkList = fd.chunks
-        .map((c) => `    chunk ${c.chunkIndex}: lines ${c.startLine}-${c.endLine}`)
-        .join('\n');
-      return `  ${fd.status.toUpperCase()} ${fd.filePath}${fd.oldPath ? ` (was: ${fd.oldPath})` : ''}\n${chunkList}`;
-    })
-    .join('\n');
-
-  const diffContent = fileDiffs
-    .map((fd) => {
-      const header = `=== ${fd.status.toUpperCase()}: ${fd.filePath} ===`;
-      const chunks = fd.chunks
-        .map((c) => `--- chunk ${c.chunkIndex} ---\n${c.diffText}`)
-        .join('\n\n');
-      return `${header}\n${chunks}`;
-    })
-    .join('\n\n');
-
-  const commitSection =
-    commitMessages.length > 0 ? commitMessages.map((m) => `- ${m}`).join('\n') : '(no commits)';
-
+export function buildSystemPrompt(): string {
   return `You are a senior code reviewer helping a human reviewer understand a pull request.
 
 Your purpose is to split this change into different aspects — like a prism splitting light —
@@ -277,22 +249,6 @@ Use the commit messages, branch name, and PR description to understand the inten
 behind the changes. If the diff references functions, classes, or patterns that suggest a
 broader context (e.g., a migration pattern, a specific domain concept), factor that into
 your tagging — name tags after the actual domain concepts you see in the code.
-
-## PR Metadata
-- **Title:** ${prTitle}
-- **Author:** ${prAuthor}
-- **Source branch:** ${headBranch}
-- **Base branch:** ${baseBranch}
-- **Description:** ${prBody || '(no description)'}
-
-## Commit History
-${commitSection}
-
-## Files and Chunks Overview
-${chunkSummary}
-
-## Full Diff
-${diffContent}
 
 ## Tag Taxonomy
 
@@ -329,7 +285,7 @@ Not every dimension applies to every chunk. Assign tags from multiple dimensions
    a brief description. Make functionality tags very specific to this PR — name them after the
    domain concepts, features, or behaviors you see in the code.
 
-3. **Assign Chunks**: For EVERY chunk listed above, assign:
+3. **Assign Chunks**: For EVERY chunk in the diff, assign:
    - One or more tags (from the tags you defined in step 2)
    - A priority (high/medium/low) based on review importance
    - A review_note ONLY for high-priority chunks or chunks needing special attention (null otherwise)
@@ -351,7 +307,49 @@ Use markdown formatting for readability:
 - Bullet lists for related points
 - \`inline code\` for function names, variable names, file paths, and code references
 
-Be precise with file_path and chunk_index — they must match the overview exactly.`;
+Be precise with file_path and chunk_index — they must match the diff exactly.`;
+}
+
+/**
+ * Build the user prompt — PR metadata, commit history, and full diff content.
+ */
+export function buildAnalysisPrompt(
+  prTitle: string,
+  prBody: string,
+  prAuthor: string,
+  baseBranch: string,
+  headBranch: string,
+  commitMessages: string[],
+  fileDiffs: ParsedFileDiff[],
+): string {
+  const diffContent = fileDiffs
+    .map((fd) => {
+      const renamed = fd.oldPath ? ` (was: ${fd.oldPath})` : '';
+      const header = `=== ${fd.status.toUpperCase()}: ${fd.filePath}${renamed} ===`;
+      const chunks = fd.chunks
+        .map((c) => `--- chunk ${c.chunkIndex} ---\n${c.diffText}`)
+        .join('\n\n');
+      return `${header}\n${chunks}`;
+    })
+    .join('\n\n');
+
+  const commitSection =
+    commitMessages.length > 0 ? commitMessages.map((m) => `- ${m}`).join('\n') : '(no commits)';
+
+  return `## PR Metadata
+- **Title:** ${prTitle}
+- **Author:** ${prAuthor}
+- **Source branch:** ${headBranch}
+- **Base branch:** ${baseBranch}
+- **Description:** ${prBody || '(no description)'}
+
+## Commit History
+${commitSection}
+
+## Full Diff
+${diffContent}
+
+Analyze this pull request and return the structured JSON response.`;
 }
 
 /**
@@ -401,7 +399,8 @@ export async function analyzePr(
         throw new Error('Failed to create OpenCode session');
       }
 
-      // Build the prompt
+      // Build the prompts
+      const systemPrompt = buildSystemPrompt();
       const prompt = buildAnalysisPrompt(
         prTitle,
         prBody,
@@ -412,20 +411,125 @@ export async function analyzePr(
         fileDiffs,
       );
       const promptKb = Math.round(Buffer.byteLength(prompt, 'utf8') / 1024);
+      const systemKb = Math.round(Buffer.byteLength(systemPrompt, 'utf8') / 1024);
       const model = modelOverride ? `${modelOverride.provider}/${modelOverride.model}` : 'default';
-      console.log(`[analyze] Sending prompt (${promptKb} KB) to ${model}...`);
+      console.log(
+        `[analyze] Sending prompt (system: ${systemKb} KB, user: ${promptKb} KB) to ${model}...`,
+      );
 
       if (process.env.DEBUG_LLM_PROMPT) {
-        console.log('[analyze] ─── LLM PROMPT START ───');
+        console.log('[analyze] ─── SYSTEM PROMPT START ───');
+        console.log(systemPrompt);
+        console.log('[analyze] ─── SYSTEM PROMPT END ───');
+        console.log('[analyze] ─── USER PROMPT START ───');
         console.log(prompt);
-        console.log('[analyze] ─── LLM PROMPT END ───');
+        console.log('[analyze] ─── USER PROMPT END ───');
       }
 
-      // Send prompt with structured output
+      // Subscribe to session events for real-time activity logging
+      const eventResult = await client.event.subscribe();
+      const eventStream = eventResult.stream;
+      let stopEventStream = false;
+
+      const eventLoop = (async () => {
+        try {
+          for await (const event of eventStream) {
+            if (stopEventStream) break;
+            const evt = event as { type: string; properties?: Record<string, unknown> };
+            if (!evt.properties) continue;
+
+            // Only log events for our session
+            const evtSessionId = evt.properties.sessionID as string | undefined;
+            if (evtSessionId && evtSessionId !== session.id) continue;
+
+            switch (evt.type) {
+              case 'session.status': {
+                const status = evt.properties.status as { type: string; message?: string };
+                if (status.type === 'retry') {
+                  console.log(`[analyze] LLM retrying: ${status.message ?? 'unknown reason'}`);
+                } else if (status.type === 'busy') {
+                  console.log('[analyze] LLM processing...');
+                }
+                break;
+              }
+              case 'session.error': {
+                const error = evt.properties.error as { name?: string; data?: unknown } | undefined;
+                console.error(
+                  `[analyze] LLM error event: ${error?.name ?? 'unknown'}`,
+                  error?.data ? JSON.stringify(error.data) : '',
+                );
+                break;
+              }
+              case 'message.part.updated': {
+                const part = evt.properties.part as { type: string; [key: string]: unknown };
+                if (part.type === 'tool') {
+                  const tool = part.tool as string;
+                  const state = part.state as { status?: string } | string;
+                  const stateStr = typeof state === 'string' ? state : JSON.stringify(state);
+                  console.log(`[analyze]   tool: ${tool} [${stateStr}]`);
+                } else if (part.type === 'step-start') {
+                  console.log('[analyze]   step started');
+                } else if (part.type === 'step-finish') {
+                  const tokens = part.tokens as {
+                    input: number;
+                    output: number;
+                  };
+                  const cost = part.cost as number;
+                  console.log(
+                    `[analyze]   step finished (${tokens.input} in / ${tokens.output} out, $${cost.toFixed(4)})`,
+                  );
+                } else if (part.type === 'retry') {
+                  const attempt = part.attempt as number;
+                  const error = part.error as { name?: string } | undefined;
+                  console.log(
+                    `[analyze]   retry attempt ${attempt}: ${error?.name ?? 'unknown error'}`,
+                  );
+                } else if (part.type === 'text') {
+                  const text = (part.text as string) ?? '';
+                  const preview = text.length > 120 ? `${text.slice(0, 120)}...` : text;
+                  if (preview.trim()) {
+                    console.log(`[analyze]   text: ${preview}`);
+                  }
+                }
+                break;
+              }
+              case 'message.part.delta': {
+                // Streaming delta — only log periodically to avoid spam
+                break;
+              }
+              default:
+                break;
+            }
+          }
+        } catch {
+          // Stream closed — expected when we stop it
+        }
+      })();
+
+      // Send prompt with structured output, system override, and all tools disabled.
+      // tools: { name: false } disables each tool individually; empty {} means "no overrides".
       const startTime = Date.now();
       const response = await client.session.prompt({
         sessionID: session.id,
+        system: systemPrompt,
         parts: [{ type: 'text', text: prompt }],
+        tools: {
+          bash: false,
+          edit: false,
+          write: false,
+          read: false,
+          grep: false,
+          glob: false,
+          list: false,
+          webfetch: false,
+          websearch: false,
+          todowrite: false,
+          task: false,
+          skill: false,
+          question: false,
+          lsp: false,
+          apply_patch: false,
+        },
         ...(modelOverride && {
           model: { providerID: modelOverride.provider, modelID: modelOverride.model },
         }),
@@ -436,13 +540,24 @@ export async function analyzePr(
         },
       });
 
+      // Stop the event stream
+      stopEventStream = true;
+      eventStream.return(undefined);
+      await eventLoop.catch(() => {});
+
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       console.log(`[analyze] LLM responded in ${elapsed}s`);
 
       // Check for errors
       const data = response.data;
       if (!data) {
-        throw new Error('No response data from LLM');
+        if (response.error) {
+          console.error('[analyze] SDK error:', JSON.stringify(response.error, null, 2));
+        }
+        console.error('[analyze] HTTP status:', response.response?.status);
+        throw new Error(
+          `No response data from LLM: ${response.error ? JSON.stringify(response.error) : 'unknown error'}`,
+        );
       }
 
       if (data.info.error) {

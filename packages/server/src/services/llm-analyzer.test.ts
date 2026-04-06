@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ParsedFileDiff } from './diff-parser.js';
-import { buildAnalysisPrompt } from './llm-analyzer.js';
+import { buildAnalysisPrompt, buildSystemPrompt } from './llm-analyzer.js';
 
 const SAMPLE_FILE_DIFFS: ParsedFileDiff[] = [
   {
@@ -104,11 +104,11 @@ describe('buildAnalysisPrompt', () => {
       SAMPLE_FILE_DIFFS,
     );
 
-    expect(prompt).toContain('MODIFIED src/requests/utils.py');
-    expect(prompt).toContain('ADDED src/requests/_types.py');
+    expect(prompt).toContain('=== MODIFIED: src/requests/utils.py ===');
+    expect(prompt).toContain('=== ADDED: src/requests/_types.py ===');
   });
 
-  it('should include chunk indices and line ranges', () => {
+  it('should include chunk markers in diff', () => {
     const prompt = buildAnalysisPrompt(
       'Title',
       'Body',
@@ -119,8 +119,8 @@ describe('buildAnalysisPrompt', () => {
       SAMPLE_FILE_DIFFS,
     );
 
-    expect(prompt).toContain('chunk 0: lines 10-16');
-    expect(prompt).toContain('chunk 1: lines 46-52');
+    expect(prompt).toContain('--- chunk 0 ---');
+    expect(prompt).toContain('--- chunk 1 ---');
   });
 
   it('should include diff content', () => {
@@ -171,10 +171,10 @@ describe('buildAnalysisPrompt', () => {
       [],
       diffs,
     );
-    expect(prompt).toContain('RENAMED new_name.py (was: old_name.py)');
+    expect(prompt).toContain('=== RENAMED: new_name.py (was: old_name.py) ===');
   });
 
-  it('should include tag taxonomy dimensions', () => {
+  it('should not include instructions (moved to system prompt)', () => {
     const prompt = buildAnalysisPrompt(
       'Title',
       'Body',
@@ -185,8 +185,29 @@ describe('buildAnalysisPrompt', () => {
       SAMPLE_FILE_DIFFS,
     );
 
-    expect(prompt).toContain('Layer');
-    expect(prompt).toContain('Functionality');
+    // Instructions and taxonomy are in the system prompt, not the user prompt
+    expect(prompt).not.toContain('You are a senior code reviewer');
+    expect(prompt).not.toContain('Tag Taxonomy');
+  });
+});
+
+describe('buildSystemPrompt', () => {
+  it('should include role and tag taxonomy', () => {
+    const system = buildSystemPrompt();
+
+    expect(system).toContain('senior code reviewer');
+    expect(system).toContain('Layer');
+    expect(system).toContain('Functionality');
+  });
+
+  it('should include instructions and formatting guidance', () => {
+    const system = buildSystemPrompt();
+
+    expect(system).toContain('PR Summary');
+    expect(system).toContain('Define Tags');
+    expect(system).toContain('Assign Chunks');
+    expect(system).toContain('Tag Summaries');
+    expect(system).toContain('markdown');
   });
 });
 
