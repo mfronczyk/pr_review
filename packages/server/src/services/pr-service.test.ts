@@ -185,7 +185,14 @@ describe('PrService.reconcileChunks', () => {
     // Sync again
     service.reconcileChunks(prId, [chunkA]);
 
-    expect(getTags(chunkId)).toHaveLength(1);
+    // Chunk has 2 tags: 'unassigned' (from first sync) + 'test-tag' (manually added)
+    expect(getTags(chunkId)).toHaveLength(2);
+    const tagNames = getTags(chunkId).map((ct) => {
+      const t = db.prepare('SELECT name FROM tags WHERE id = ?').get(ct.tag_id) as { name: string };
+      return t.name;
+    });
+    expect(tagNames).toContain('test-tag');
+    expect(tagNames).toContain('unassigned');
     expect(getMetadata(chunkId)?.priority).toBe('high');
     expect(getComments(chunkId)).toHaveLength(1);
     expect(getComments(chunkId)[0].body).toBe('Test comment');
@@ -363,6 +370,97 @@ describe('PrService.reconcileChunks', () => {
     // Confirm B is gone
     const bExists = db.prepare('SELECT id FROM chunks WHERE id = ?').get(idB);
     expect(bExists).toBeUndefined();
+  });
+});
+
+describe('PrService.reconcileChunks – unassigned tag', () => {
+  it('should assign "unassigned" tag to new chunks on first sync', () => {
+    service.reconcileChunks(prId, [chunkA, chunkB]);
+    const chunks = getChunks();
+    expect(chunks).toHaveLength(2);
+
+    // Both chunks should have the 'unassigned' tag
+    for (const chunk of chunks) {
+      const tags = getTags(chunk.id);
+      expect(tags).toHaveLength(1);
+
+      const tagRow = db.prepare('SELECT * FROM tags WHERE id = ?').get(tags[0].tag_id) as {
+        name: string;
+        description: string;
+      };
+      expect(tagRow.name).toBe('unassigned');
+      expect(tagRow.description).toBe('Chunks not categorized by LLM analysis');
+    }
+  });
+
+  it('should assign "unassigned" tag to newly added chunks on subsequent sync', () => {
+    // Initial sync with chunkA
+    service.reconcileChunks(prId, [chunkA]);
+    const chunksAfterFirst = getChunks();
+    expect(chunksAfterFirst).toHaveLength(1);
+
+    // Manually assign a real tag to chunkA (simulate LLM analysis)
+    db.prepare('DELETE FROM chunk_tags WHERE chunk_id = ?').run(chunksAfterFirst[0].id);
+    db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
+      prId,
+      'real-tag',
+      'A real tag',
+    );
+    const realTagId = (
+      db.prepare('SELECT id FROM tags WHERE name = ? AND pr_id = ?').get('real-tag', prId) as {
+        id: number;
+      }
+    ).id;
+    db.prepare('INSERT INTO chunk_tags (chunk_id, tag_id) VALUES (?, ?)').run(
+      chunksAfterFirst[0].id,
+      realTagId,
+    );
+
+    // Sync again adding chunkB
+    const chunkC: ChunkInput = {
+      filePath: 'src/c.ts',
+      chunkIndex: 0,
+      contentHash: 'hashC',
+      diffText: '+new stuff',
+      startLine: 1,
+      endLine: 4,
+    };
+    service.reconcileChunks(prId, [chunkA, chunkC]);
+
+    const chunksAfterSecond = getChunks();
+    expect(chunksAfterSecond).toHaveLength(2);
+
+    // chunkA should still have only its real tag (not unassigned)
+    const chunkARow = chunksAfterSecond.find((c) => c.content_hash === 'hashA');
+    expect(chunkARow).toBeDefined();
+    const chunkATags = getTags(chunkARow!.id);
+    expect(chunkATags).toHaveLength(1);
+    expect(chunkATags[0].tag_id).toBe(realTagId);
+
+    // chunkC should have the 'unassigned' tag
+    const chunkCRow = chunksAfterSecond.find((c) => c.content_hash === 'hashC');
+    expect(chunkCRow).toBeDefined();
+    const chunkCTags = getTags(chunkCRow!.id);
+    expect(chunkCTags).toHaveLength(1);
+    const unassignedTag = db
+      .prepare('SELECT * FROM tags WHERE id = ?')
+      .get(chunkCTags[0].tag_id) as {
+      name: string;
+    };
+    expect(unassignedTag.name).toBe('unassigned');
+  });
+
+  it('should not duplicate "unassigned" tag when syncing with no new chunks', () => {
+    // Initial sync
+    service.reconcileChunks(prId, [chunkA]);
+
+    // Sync again with same chunks — no new additions
+    service.reconcileChunks(prId, [chunkA]);
+
+    const chunks = getChunks();
+    const tags = getTags(chunks[0].id);
+    // Should still have exactly 1 unassigned tag, not 2
+    expect(tags).toHaveLength(1);
   });
 });
 

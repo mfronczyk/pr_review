@@ -279,6 +279,42 @@ export class PrService {
           added++;
         }
       }
+
+      // 4. Assign the 'unassigned' tag to any chunks that have no tags.
+      //    This ensures newly added chunks are visible in the UI's tag-based
+      //    filter/grouping, matching the same fallback used by LLM analysis.
+      if (added > 0) {
+        const untaggedChunks = this.db
+          .prepare(
+            `SELECT c.id FROM chunks c
+             WHERE c.pr_id = ?
+               AND c.id NOT IN (SELECT chunk_id FROM chunk_tags)`,
+          )
+          .all(prId) as Array<{ id: number }>;
+
+        if (untaggedChunks.length > 0) {
+          const getOrCreateTag = this.db.prepare(`
+            INSERT INTO tags (name, description, pr_id)
+            VALUES (@name, @description, @prId)
+            ON CONFLICT (name, pr_id) DO UPDATE SET description = description
+            RETURNING id
+          `);
+
+          const unassignedTag = getOrCreateTag.get({
+            name: 'unassigned',
+            description: 'Chunks not categorized by LLM analysis',
+            prId,
+          }) as { id: number };
+
+          const insertChunkTag = this.db.prepare(
+            'INSERT OR IGNORE INTO chunk_tags (chunk_id, tag_id) VALUES (?, ?)',
+          );
+
+          for (const chunk of untaggedChunks) {
+            insertChunkTag.run(chunk.id, unassignedTag.id);
+          }
+        }
+      }
     });
 
     reconcile();
