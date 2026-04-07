@@ -632,12 +632,11 @@ export function ReviewPage(): React.ReactElement {
     return Array.from(map.values()).sort((a, b) => b.chunks.length - a.chunks.length);
   }, [chunks, tags, tagSummaries]);
 
-  // Derive the summary to show above the diff:
-  // When a tag group is selected, show that group's summary
-  const activeSummary = useMemo((): string | null => {
+  // Derive the active group to show in the main view header:
+  // When a tag group is selected, expose it for the tag name + summary display
+  const activeGroup = useMemo((): GroupInfo | null => {
     if (activeFilter) {
-      const group = groups.find((g) => g.tag.name === activeFilter.value);
-      return group?.summary ?? null;
+      return groups.find((g) => g.tag.name === activeFilter.value) ?? null;
     }
     return null;
   }, [activeFilter, groups]);
@@ -1030,9 +1029,25 @@ export function ReviewPage(): React.ReactElement {
               departingChunkIds={departingChunkIds}
               scrollToFile={scrollToFile}
               headerContent={
-                activeSummary ? (
-                  <div className="mx-auto mb-4 max-w-3xl rounded-lg border border-border-secondary bg-surface-secondary px-4 py-2">
-                    <Markdown text={activeSummary} className="text-xs text-fg-secondary" />
+                activeGroup ? (
+                  <div className="mx-auto mb-4 max-w-3xl">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span
+                        className="inline-block h-2.5 w-2.5 flex-shrink-0 rounded-full"
+                        style={{ backgroundColor: getTagColor(activeGroup.tag.name) }}
+                      />
+                      <h2 className="text-sm font-semibold text-fg-primary">
+                        {activeGroup.tag.name}
+                      </h2>
+                    </div>
+                    {activeGroup.summary && (
+                      <div className="rounded-lg border border-border-secondary bg-surface-secondary px-4 py-2">
+                        <Markdown
+                          text={activeGroup.summary}
+                          className="text-xs text-fg-secondary"
+                        />
+                      </div>
+                    )}
                   </div>
                 ) : undefined
               }
