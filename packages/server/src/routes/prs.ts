@@ -238,6 +238,74 @@ export function createPrRoutes(
     }
   });
 
+  /**
+   * GET /api/prs/:id/context
+   * Get file content lines at the PR's head revision for expanding diff context.
+   *
+   * Query params:
+   *   filePath  - path of the file in the repo
+   *   startLine - 1-indexed start line (inclusive)
+   *   endLine   - 1-indexed end line (inclusive)
+   *
+   * Returns: { lines: Array<{ lineNumber: number; content: string }> }
+   */
+  router.get('/:id/context', async (req, res) => {
+    try {
+      const prId = Number(req.params.id);
+      const filePath = req.query.filePath as string | undefined;
+      const startLine = Number(req.query.startLine);
+      const endLine = Number(req.query.endLine);
+
+      if (!filePath || !Number.isFinite(startLine) || !Number.isFinite(endLine)) {
+        res.status(400).json({ error: 'filePath, startLine, and endLine are required' });
+        return;
+      }
+      if (startLine < 1 || endLine < startLine) {
+        res
+          .status(400)
+          .json({ error: 'Invalid line range: startLine must be >= 1 and endLine >= startLine' });
+        return;
+      }
+
+      const pr = prService.getPr(prId);
+      if (!pr) {
+        res.status(404).json({ error: 'PR not found' });
+        return;
+      }
+
+      const git = new GitService({ repoPath });
+      const localBranch = `pr-${pr.number}`;
+
+      // Ensure the branch is available locally
+      const branchExists = await git.refExists(localBranch);
+      if (!branchExists) {
+        await git.fetchPr(pr.number);
+      }
+
+      const fileContent = await git.getFileContent(localBranch, filePath);
+      const allLines = fileContent.split('\n');
+
+      // Clamp range to actual file length
+      const clampedStart = Math.max(1, startLine);
+      const clampedEnd = Math.min(allLines.length, endLine);
+
+      const lines: Array<{ lineNumber: number; content: string }> = [];
+      for (let i = clampedStart; i <= clampedEnd; i++) {
+        lines.push({ lineNumber: i, content: allLines[i - 1] });
+      }
+
+      res.json({ lines });
+    } catch (error) {
+      const message = errorMessage(error);
+      // git show fails if the file doesn't exist at that revision
+      if (message.includes('does not exist') || message.includes('exists on disk')) {
+        res.status(404).json({ error: `File not found at PR revision: ${req.query.filePath}` });
+        return;
+      }
+      res.status(500).json({ error: message });
+    }
+  });
+
   return router;
 }
 

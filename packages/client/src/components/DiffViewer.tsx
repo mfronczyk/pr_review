@@ -10,6 +10,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { getContextLines } from '@/api';
 import { InlineThread, NewCommentForm } from '@/components/InlineComment';
 import { Markdown } from '@/components/Markdown';
 import { highlightLines } from '@/highlight';
@@ -166,6 +167,52 @@ function ReviewNote({ note }: { note: string }): React.ReactElement {
         <Markdown text={note} compact className="inline" />
       </div>
     </div>
+  );
+}
+
+// ── Expand Context ──────────────────────────────────────────
+
+/** Tracks expanded context state for a single chunk. */
+interface ExpandedContext {
+  above: ParsedDiffLine[];
+  below: ParsedDiffLine[];
+  /** The lowest new-side line number loaded above the chunk. */
+  topLine: number;
+  /** The highest new-side line number loaded below the chunk. */
+  bottomLine: number;
+  topExhausted: boolean;
+  bottomExhausted: boolean;
+  loadingAbove: boolean;
+  loadingBelow: boolean;
+}
+
+const EXPAND_LINES = 20;
+
+function ExpandButton({
+  direction,
+  loading,
+  onClick,
+}: {
+  direction: 'above' | 'below';
+  loading: boolean;
+  onClick: () => void;
+}): React.ReactElement {
+  const arrow = direction === 'above' ? '\u2191' : '\u2193';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={loading}
+      className="flex w-full items-center justify-center gap-1 border-t border-border-secondary bg-diff-info-bg/20 py-0.5 text-xs text-diff-info-fg hover:bg-diff-info-bg/40 disabled:opacity-50"
+    >
+      {loading ? (
+        'Loading...'
+      ) : (
+        <>
+          {arrow} Show {EXPAND_LINES} more lines
+        </>
+      )}
+    </button>
   );
 }
 
@@ -357,6 +404,31 @@ function DiffLine({
 
 // ── Chunk Block ─────────────────────────────────────────────
 
+/**
+ * Extract the first new-side line number from parsed diff lines.
+ * This is the line number at the top of the hunk, used to determine
+ * how far above the chunk we can expand.
+ */
+function getFirstNewLineNum(parsedLines: ParsedDiffLine[]): number {
+  for (const line of parsedLines) {
+    if (line.newLineNum != null) return line.newLineNum;
+  }
+  return 1;
+}
+
+/**
+ * Extract the last new-side line number from parsed diff lines.
+ * This is the line number at the bottom of the hunk, used to determine
+ * where to start expanding below.
+ */
+function getLastNewLineNum(parsedLines: ParsedDiffLine[]): number {
+  for (let i = parsedLines.length - 1; i >= 0; i--) {
+    const num = parsedLines[i].newLineNum;
+    if (num != null) return num;
+  }
+  return 1;
+}
+
 function ChunkBlock({
   chunk,
   onToggleApproved,
@@ -382,14 +454,110 @@ function ChunkBlock({
 }): React.ReactElement {
   const parsedLines = useMemo(() => parseDiffLines(chunk.diffText), [chunk.diffText]);
 
+  // ── Expanded context state ──────────────────────────────
+  const [expanded, setExpanded] = useState<ExpandedContext>(() => {
+    const firstLine = getFirstNewLineNum(parsedLines);
+    const lastLine = getLastNewLineNum(parsedLines);
+    return {
+      above: [],
+      below: [],
+      topLine: firstLine,
+      bottomLine: lastLine,
+      topExhausted: firstLine <= 1,
+      bottomExhausted: false,
+      loadingAbove: false,
+      loadingBelow: false,
+    };
+  });
+
+  // Reset expanded context when the chunk's diff text changes
+  useEffect(() => {
+    const firstLine = getFirstNewLineNum(parsedLines);
+    const lastLine = getLastNewLineNum(parsedLines);
+    setExpanded({
+      above: [],
+      below: [],
+      topLine: firstLine,
+      bottomLine: lastLine,
+      topExhausted: firstLine <= 1,
+      bottomExhausted: false,
+      loadingAbove: false,
+      loadingBelow: false,
+    });
+  }, [parsedLines]);
+
+  const handleExpandAbove = useCallback(async () => {
+    setExpanded((prev) => ({ ...prev, loadingAbove: true }));
+    try {
+      const endLine = expanded.topLine - 1;
+      const startLine = Math.max(1, endLine - EXPAND_LINES + 1);
+      if (endLine < 1) {
+        setExpanded((prev) => ({ ...prev, topExhausted: true, loadingAbove: false }));
+        return;
+      }
+      const { lines } = await getContextLines(chunk.prId, chunk.filePath, startLine, endLine);
+      const newLines: ParsedDiffLine[] = lines.map((l) => ({
+        type: 'context' as const,
+        content: l.content,
+        prefix: ' ',
+        oldLineNum: l.lineNumber,
+        newLineNum: l.lineNumber,
+      }));
+      setExpanded((prev) => ({
+        ...prev,
+        above: [...newLines, ...prev.above],
+        topLine: startLine,
+        topExhausted: startLine <= 1,
+        loadingAbove: false,
+      }));
+    } catch {
+      setExpanded((prev) => ({ ...prev, loadingAbove: false }));
+    }
+  }, [expanded.topLine, chunk.prId, chunk.filePath]);
+
+  const handleExpandBelow = useCallback(async () => {
+    setExpanded((prev) => ({ ...prev, loadingBelow: true }));
+    try {
+      const startLine = expanded.bottomLine + 1;
+      const endLine = startLine + EXPAND_LINES - 1;
+      const { lines } = await getContextLines(chunk.prId, chunk.filePath, startLine, endLine);
+      if (lines.length === 0) {
+        setExpanded((prev) => ({ ...prev, bottomExhausted: true, loadingBelow: false }));
+        return;
+      }
+      const newLines: ParsedDiffLine[] = lines.map((l) => ({
+        type: 'context' as const,
+        content: l.content,
+        prefix: ' ',
+        oldLineNum: l.lineNumber,
+        newLineNum: l.lineNumber,
+      }));
+      setExpanded((prev) => ({
+        ...prev,
+        below: [...prev.below, ...newLines],
+        bottomLine: lines[lines.length - 1].lineNumber,
+        bottomExhausted: lines.length < EXPAND_LINES,
+        loadingBelow: false,
+      }));
+    } catch {
+      setExpanded((prev) => ({ ...prev, loadingBelow: false }));
+    }
+  }, [expanded.bottomLine, chunk.prId, chunk.filePath]);
+
+  // ── Combined lines for rendering and highlighting ───────
+  const allLines = useMemo(
+    () => [...expanded.above, ...parsedLines, ...expanded.below],
+    [expanded.above, parsedLines, expanded.below],
+  );
+
   // Compute syntax-highlighted HTML for each line.
   // We highlight all code lines together (preserving multi-line token state)
   // and then map the results back to each parsed line.
   const highlightedHtmlLines = useMemo((): (string | null)[] => {
-    const codeLines = parsedLines.map((p) => (p.type === 'hunk-header' ? '' : p.content));
+    const codeLines = allLines.map((p) => (p.type === 'hunk-header' ? '' : p.content));
     const highlighted = highlightLines(chunk.filePath, codeLines);
-    return parsedLines.map((p, i) => (p.type === 'hunk-header' ? null : highlighted[i]));
-  }, [parsedLines, chunk.filePath]);
+    return allLines.map((p, i) => (p.type === 'hunk-header' ? null : highlighted[i]));
+  }, [allLines, chunk.filePath]);
 
   // Track which diff line index the comment form is open for (null = closed).
   // We use the array index (not line number) because multiple diff lines can
@@ -433,8 +601,16 @@ function ChunkBlock({
             <ReviewNote note={chunk.metadata.reviewNote} />
           </div>
         )}
+        {/* Expand above button */}
+        {!expanded.topExhausted && (
+          <ExpandButton
+            direction="above"
+            loading={expanded.loadingAbove}
+            onClick={handleExpandAbove}
+          />
+        )}
         <div className="font-mono">
-          {parsedLines.map((parsed, i) => {
+          {allLines.map((parsed, i) => {
             const anchor = getCommentAnchor(parsed);
             const threadKey = `${anchor.line}:${anchor.side}`;
             const threadsForLine = threadsByLine.get(threadKey);
@@ -478,6 +654,14 @@ function ChunkBlock({
             );
           })}
         </div>
+        {/* Expand below button */}
+        {!expanded.bottomExhausted && (
+          <ExpandButton
+            direction="below"
+            loading={expanded.loadingBelow}
+            onClick={handleExpandBelow}
+          />
+        )}
       </div>
 
       {/* Footer — mirrors ChunkHeader, dimmed when approved */}

@@ -140,6 +140,27 @@ export function getTags(prId: number): Promise<Tag[]> {
   return request(`/api/prs/${prId}/tags`);
 }
 
+// ── Context Lines ───────────────────────────────────────────
+
+export interface ContextLine {
+  lineNumber: number;
+  content: string;
+}
+
+export function getContextLines(
+  prId: number,
+  filePath: string,
+  startLine: number,
+  endLine: number,
+): Promise<{ lines: ContextLine[] }> {
+  const params = new URLSearchParams({
+    filePath,
+    startLine: String(startLine),
+    endLine: String(endLine),
+  });
+  return request(`/api/prs/${prId}/context?${params}`);
+}
+
 // ── Comments ────────────────────────────────────────────────
 
 export function getComments(prId: number): Promise<Comment[]> {

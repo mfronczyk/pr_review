@@ -136,6 +136,18 @@ export class GitService {
   }
 
   /**
+   * Get the contents of a file at a specific revision.
+   * Uses `git show <ref>:<path>` to retrieve the file content.
+   *
+   * @param ref - The git ref (e.g. 'pr-123', a commit SHA)
+   * @param filePath - The file path relative to the repo root
+   * @returns The file content as a string
+   */
+  async getFileContent(ref: string, filePath: string): Promise<string> {
+    return this.git('show', `${ref}:${filePath}`);
+  }
+
+  /**
    * Wrap a git fetch error with a helpful message that tells the user
    * what to check and how to fix it.
    */
