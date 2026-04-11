@@ -1,4 +1,10 @@
-import type { PrState, PullRequest, SyncResult } from '@pr-review/shared';
+import type {
+  PrState,
+  PullRequest,
+  ReviewEvent,
+  SubmitReviewResponse,
+  SyncResult,
+} from '@pr-review/shared';
 import type Database from 'better-sqlite3';
 import { CommentService } from './comment-service.js';
 import { flattenChunks, parseDiff } from './diff-parser.js';
@@ -81,6 +87,10 @@ export class PrService {
 
     // 4. Fetch PR branch and compute diff
     await this.fetchAndStoreDiff(pr);
+
+    // 5. Import existing GitHub review comments
+    const commentService = new CommentService({ db: this.db });
+    await commentService.importGitHubComments(pr.id, owner, repo, prNumber, ghHost);
 
     return mapPrRow(pr);
   }
@@ -298,6 +308,36 @@ export class PrService {
   deletePr(prId: number): boolean {
     const result = this.db.prepare('DELETE FROM prs WHERE id = ?').run(prId);
     return result.changes > 0;
+  }
+
+  /**
+   * Submit a review on the PR via the GitHub API.
+   * Supports APPROVE and COMMENT events.
+   */
+  async submitReview(
+    prId: number,
+    event: ReviewEvent,
+    body?: string,
+  ): Promise<SubmitReviewResponse> {
+    const pr = this.db.prepare('SELECT * FROM prs WHERE id = ?').get(prId) as PrDbRow | undefined;
+    if (!pr) {
+      throw new Error(`PR not found: ${prId}`);
+    }
+
+    const octokit = await getOctokit(pr.gh_host);
+    const { data: review } = await octokit.pulls.createReview({
+      owner: pr.owner,
+      repo: pr.repo,
+      pull_number: pr.number,
+      event,
+      body: body || undefined,
+    });
+
+    return {
+      id: review.id,
+      state: review.state,
+      submittedAt: review.submitted_at ?? new Date().toISOString(),
+    };
   }
 }
 

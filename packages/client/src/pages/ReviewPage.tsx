@@ -8,8 +8,9 @@ import { Link, useParams } from 'react-router-dom';
 
 import * as api from '@/api';
 import { DiffViewer } from '@/components/DiffViewer';
+import { SubmitReviewDialog } from '@/components/SubmitReviewDialog';
 import { useAsync } from '@/hooks/use-async';
-import type { ChunkWithDetails, PrWithProgress, Tag } from '@pr-review/shared';
+import type { ChunkWithDetails, PrWithProgress, ReviewEvent, Tag } from '@pr-review/shared';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -17,6 +18,7 @@ interface GroupInfo {
   tag: Tag;
   chunks: ChunkWithDetails[];
   approvedCount: number;
+  summary?: string;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -161,6 +163,18 @@ function collapseTree(node: TreeNode): TreeNode {
   return { ...node, children: collapsed };
 }
 
+/**
+ * Sort tree nodes: directories before files, alphabetical within each group.
+ * A collapsed node like "components/Foo.tsx" (isFile but name contains "/")
+ * is treated as a directory for sorting purposes.
+ */
+function sortTreeNodes(a: TreeNode, b: TreeNode): number {
+  const aIsDir = !a.isFile || a.name.includes('/');
+  const bIsDir = !b.isFile || b.name.includes('/');
+  if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
+  return a.name.localeCompare(b.name);
+}
+
 function FileTreeNode({
   node,
   depth,
@@ -196,11 +210,7 @@ function FileTreeNode({
     );
   }
 
-  const sortedChildren = Array.from(node.children.values()).sort((a, b) => {
-    // Directories first, then files
-    if (a.isFile !== b.isFile) return a.isFile ? 1 : -1;
-    return a.name.localeCompare(b.name);
-  });
+  const sortedChildren = Array.from(node.children.values()).sort(sortTreeNodes);
 
   return (
     <div>
@@ -270,11 +280,7 @@ const Sidebar = memo(function Sidebar({
   }
 
   const sortedRootChildren = useMemo(
-    () =>
-      Array.from(fileTree.children.values()).sort((a, b) => {
-        if (a.isFile !== b.isFile) return a.isFile ? 1 : -1;
-        return a.name.localeCompare(b.name);
-      }),
+    () => Array.from(fileTree.children.values()).sort(sortTreeNodes),
     [fileTree],
   );
 
@@ -422,10 +428,13 @@ function Toolbar({
   onSync,
   onAnalyze,
   onPublishAll,
+  onSubmitReview,
   syncing,
   analyzing,
   unpublishedCount,
   modelLabel,
+  additions,
+  deletions,
 }: {
   hideApproved: boolean;
   onToggleHideApproved: () => void;
@@ -434,10 +443,13 @@ function Toolbar({
   onSync: () => void;
   onAnalyze: () => void;
   onPublishAll: () => Promise<void>;
+  onSubmitReview: () => void;
   syncing: boolean;
   analyzing: boolean;
   unpublishedCount: number;
   modelLabel: string | null;
+  additions: number;
+  deletions: number;
 }): React.ReactElement {
   const [publishing, setPublishing] = useState(false);
 
@@ -471,6 +483,10 @@ function Toolbar({
           />
           Show unresolved
         </label>
+        <span className="text-xs font-mono">
+          <span className="text-green-600 dark:text-green-400">+{additions}</span>{' '}
+          <span className="text-red-600 dark:text-red-400">-{deletions}</span>
+        </span>
       </div>
       <div className="flex items-center gap-2">
         {unpublishedCount > 0 && (
@@ -487,11 +503,18 @@ function Toolbar({
         )}
         <button
           type="button"
+          onClick={onSubmitReview}
+          className="rounded-md bg-green-700 px-3 py-1 text-xs text-white hover:bg-green-600 disabled:opacity-50"
+        >
+          Submit Review
+        </button>
+        <button
+          type="button"
           onClick={onSync}
           disabled={syncing}
           className="rounded-md border border-border-primary bg-surface-secondary px-3 py-1 text-xs text-fg-secondary hover:bg-surface-tertiary disabled:opacity-50"
         >
-          {syncing ? 'Syncing...' : 'Sync'}
+          {syncing ? 'Fetching...' : 'Fetch Latest'}
         </button>
         <button
           type="button"
@@ -522,6 +545,8 @@ export function ReviewPage(): React.ReactElement {
   const [showUnresolved, setShowUnresolved] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
+  const [submittingReview, setSubmittingReview] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [departingChunkIds, setDepartingChunkIds] = useState<Set<number>>(new Set());
 
@@ -551,6 +576,11 @@ export function ReviewPage(): React.ReactElement {
 
   const { data: tags } = useAsync(() => api.getTags(), []);
 
+  const { data: tagSummaries, reload: reloadTagSummaries } = useAsync(
+    () => api.getTagSummaries(prId),
+    [prId],
+  );
+
   const { data: modelInfo } = useAsync(() => api.getModelInfo(), []);
 
   const modelLabel = useMemo((): string | null => {
@@ -561,7 +591,8 @@ export function ReviewPage(): React.ReactElement {
   const reload = useCallback(() => {
     reloadPr();
     reloadChunks();
-  }, [reloadPr, reloadChunks]);
+    reloadTagSummaries();
+  }, [reloadPr, reloadChunks, reloadTagSummaries]);
 
   /** Wraps an async action with error handling. */
   const withErrorHandling = useCallback(async (fn: () => Promise<void>): Promise<void> => {
@@ -576,6 +607,13 @@ export function ReviewPage(): React.ReactElement {
   // Build groups from tag assignments
   const groups = useMemo((): GroupInfo[] => {
     if (!chunks || !tags) return [];
+    // Build a lookup from tag name to summary
+    const summaryByTagName = new Map<string, string>();
+    if (tagSummaries) {
+      for (const ts of tagSummaries) {
+        summaryByTagName.set(ts.tagName, ts.summary);
+      }
+    }
     const map = new Map<number, GroupInfo>();
     for (const tag of tags) {
       const tagChunks = chunks.filter((c) => c.tags.some((t) => t.id === tag.id));
@@ -584,11 +622,19 @@ export function ReviewPage(): React.ReactElement {
           tag,
           chunks: tagChunks,
           approvedCount: tagChunks.filter((c) => c.approved).length,
+          summary: summaryByTagName.get(tag.name),
         });
       }
     }
     return Array.from(map.values()).sort((a, b) => b.chunks.length - a.chunks.length);
-  }, [chunks, tags]);
+  }, [chunks, tags, tagSummaries]);
+
+  // Derive the summary for the currently selected group (if any)
+  const activeGroupSummary = useMemo((): string | null => {
+    if (!activeFilter) return null;
+    const group = groups.find((g) => g.tag.name === activeFilter.value);
+    return group?.summary ?? null;
+  }, [activeFilter, groups]);
 
   // Get unique file list — scoped to the active tag filter so the sidebar
   // only shows files that contain chunks from the selected group.
@@ -839,6 +885,21 @@ export function ReviewPage(): React.ReactElement {
     });
   }
 
+  const handleSubmitReview = useCallback(
+    async (event: ReviewEvent, body?: string): Promise<void> => {
+      setSubmittingReview(true);
+      try {
+        await withErrorHandling(async () => {
+          await api.submitReview(prId, event, body);
+          setReviewDialogOpen(false);
+        });
+      } finally {
+        setSubmittingReview(false);
+      }
+    },
+    [prId, withErrorHandling],
+  );
+
   // Count actual unpublished comments (not chunks with unpublished comments)
   const unpublishedCount = useMemo(() => {
     if (!chunks) return 0;
@@ -925,11 +986,20 @@ export function ReviewPage(): React.ReactElement {
           onSync={handleSync}
           onAnalyze={handleAnalyze}
           onPublishAll={handlePublishAll}
+          onSubmitReview={() => setReviewDialogOpen(true)}
           syncing={syncing}
           analyzing={analyzing}
           unpublishedCount={unpublishedCount}
           modelLabel={modelLabel}
+          additions={prWithLocalProgress.additions}
+          deletions={prWithLocalProgress.deletions}
         />
+
+        {activeGroupSummary && (
+          <div className="flex-shrink-0 border-b border-border-secondary bg-surface-secondary px-4 py-2">
+            <p className="text-xs text-fg-secondary">{activeGroupSummary}</p>
+          </div>
+        )}
 
         <div className="flex-1 overflow-hidden">
           {filteredChunks.length === 0 ? (
@@ -957,6 +1027,13 @@ export function ReviewPage(): React.ReactElement {
           )}
         </div>
       </div>
+
+      <SubmitReviewDialog
+        isOpen={reviewDialogOpen}
+        onClose={() => setReviewDialogOpen(false)}
+        onSubmit={handleSubmitReview}
+        isSubmitting={submittingReview}
+      />
     </div>
   );
 }

@@ -116,6 +116,13 @@ describe('buildAnalysisPrompt', () => {
     const prompt = buildAnalysisPrompt('Title', 'Body', 'author', 'main', diffs);
     expect(prompt).toContain('RENAMED new_name.py (was: old_name.py)');
   });
+
+  it('should instruct the LLM to generate tag summaries', () => {
+    const prompt = buildAnalysisPrompt('Title', 'Body', 'author', 'main', SAMPLE_FILE_DIFFS);
+
+    expect(prompt).toContain('tag group');
+    expect(prompt).toContain('contextual summary');
+  });
 });
 
 describe('ANALYSIS_SCHEMA', () => {
@@ -126,7 +133,19 @@ describe('ANALYSIS_SCHEMA', () => {
     expect(ANALYSIS_SCHEMA.required).toContain('pr_summary');
     expect(ANALYSIS_SCHEMA.required).toContain('suggested_tags');
     expect(ANALYSIS_SCHEMA.required).toContain('chunk_assignments');
+    expect(ANALYSIS_SCHEMA.required).toContain('tag_summaries');
     expect(ANALYSIS_SCHEMA.properties.chunk_assignments.type).toBe('array');
+  });
+
+  it('should include tag_summaries array with tag and summary fields', async () => {
+    const { ANALYSIS_SCHEMA } = await import('./llm-analyzer.js');
+
+    const tagSummaries = ANALYSIS_SCHEMA.properties.tag_summaries;
+    expect(tagSummaries.type).toBe('array');
+    expect(tagSummaries.items.properties).toHaveProperty('tag');
+    expect(tagSummaries.items.properties).toHaveProperty('summary');
+    expect(tagSummaries.items.required).toContain('tag');
+    expect(tagSummaries.items.required).toContain('summary');
   });
 });
 

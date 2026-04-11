@@ -164,11 +164,12 @@ export function createCommentRoutes(db: Database.Database): Router {
 
   /**
    * POST /api/comments/:id/resolve
-   * Resolve a comment thread.
+   * Resolve a comment thread. If published to GitHub, also resolves it there.
    */
-  router.post('/comments/:id/resolve', (req, res) => {
+  router.post('/comments/:id/resolve', async (req, res) => {
+    const commentId = Number(req.params.id);
     try {
-      const comment = commentService.resolveThread(Number(req.params.id));
+      const comment = await commentService.resolveThread(commentId);
       res.json(comment);
     } catch (error) {
       const msg = errorMessage(error);
@@ -176,17 +177,19 @@ export function createCommentRoutes(db: Database.Database): Router {
         res.status(404).json({ error: msg });
         return;
       }
+      console.error(`[comments] Failed to resolve thread #${commentId}: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });
 
   /**
    * POST /api/comments/:id/unresolve
-   * Unresolve a comment thread.
+   * Unresolve a comment thread. If published to GitHub, also unresolves it there.
    */
-  router.post('/comments/:id/unresolve', (req, res) => {
+  router.post('/comments/:id/unresolve', async (req, res) => {
+    const commentId = Number(req.params.id);
     try {
-      const comment = commentService.unresolveThread(Number(req.params.id));
+      const comment = await commentService.unresolveThread(commentId);
       res.json(comment);
     } catch (error) {
       const msg = errorMessage(error);
@@ -194,6 +197,7 @@ export function createCommentRoutes(db: Database.Database): Router {
         res.status(404).json({ error: msg });
         return;
       }
+      console.error(`[comments] Failed to unresolve thread #${commentId}: ${msg}`);
       res.status(500).json({ error: msg });
     }
   });

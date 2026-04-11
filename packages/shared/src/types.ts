@@ -95,6 +95,7 @@ export interface Comment {
   parentId: number | null;
   author: string | null;
   ghCommentId: number | null;
+  ghNodeId: string | null;
   resolved: boolean;
   createdAt: string;
   publishedAt: string | null;
@@ -149,6 +150,12 @@ export interface LlmAnalysisResult {
   prSummary: string;
   suggestedTags: LlmSuggestedTag[];
   chunkAssignments: LlmChunkAssignment[];
+  tagSummaries: LlmTagSummary[];
+}
+
+export interface LlmTagSummary {
+  tag: string;
+  summary: string;
 }
 
 // ── API Request/Response Types ──────────────────────────────
@@ -163,6 +170,8 @@ export interface AddPrRequest {
 export interface PrWithProgress extends PullRequest {
   totalChunks: number;
   approvedChunks: number;
+  additions: number;
+  deletions: number;
 }
 
 export interface ChunkWithDetails extends Chunk {
@@ -176,4 +185,33 @@ export interface SyncResult {
   removed: number;
   updated: number;
   outdated: number;
+}
+
+// ── Review Submission ──────────────────────────────────────
+
+export type ReviewEvent = 'APPROVE' | 'COMMENT';
+
+export interface SubmitReviewRequest {
+  event: ReviewEvent;
+  body?: string;
+}
+
+export interface SubmitReviewResponse {
+  id: number;
+  state: string;
+  submittedAt: string;
+}
+
+// ── Server Config ──────────────────────────────────────────
+
+export interface ServerConfig {
+  repoPath: string;
+}
+
+// ── Tag Summary ────────────────────────────────────────────
+
+export interface TagSummary {
+  tagId: number;
+  tagName: string;
+  summary: string;
 }

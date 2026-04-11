@@ -101,3 +101,85 @@ body {
   color: rgb(var(--color-fg-primary));
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
+
+/*
+ * Minimal syntax highlighting theme for diff views.
+ * Only highlights keywords, strings, comments, and numbers — intentionally
+ * subtle to avoid visual noise in a diff context. Colors are modeled after
+ * GitHub's syntax theme with reduced saturation.
+ */
+
+/* Reset: hljs container should not override diff line colors */
+.hljs {
+  background: transparent;
+  color: inherit;
+}
+
+/* Light mode tokens */
+:root {
+  --hljs-keyword: #a626a4; /* purple — keywords, built-ins */
+  --hljs-string: #0a7d2e; /* green — strings, regex */
+  --hljs-comment: #8b949e; /* gray — comments */
+  --hljs-number: #0550ae; /* blue — numbers, constants */
+  --hljs-title: #6639ba; /* purple — function/class names */
+  --hljs-attr: #953800; /* orange — attributes, properties */
+  --hljs-tag: #0550ae; /* blue — HTML/XML tags */
+}
+
+/* Dark mode tokens */
+.dark {
+  --hljs-keyword: #c678dd;
+  --hljs-string: #98c379;
+  --hljs-comment: #6b737c;
+  --hljs-number: #79c0ff;
+  --hljs-title: #d2a8ff;
+  --hljs-attr: #ffa657;
+  --hljs-tag: #79c0ff;
+}
+
+/* Keywords & built-ins */
+.hljs-keyword,
+.hljs-built_in,
+.hljs-type,
+.hljs-literal {
+  color: var(--hljs-keyword);
+}
+
+/* Strings & regex */
+.hljs-string,
+.hljs-regexp,
+.hljs-template-variable {
+  color: var(--hljs-string);
+}
+
+/* Comments & documentation */
+.hljs-comment,
+.hljs-doctag {
+  color: var(--hljs-comment);
+  font-style: italic;
+}
+
+/* Numbers & constants */
+.hljs-number {
+  color: var(--hljs-number);
+}
+
+/* Function & class names */
+.hljs-title,
+.hljs-title\.class_,
+.hljs-title\.function_ {
+  color: var(--hljs-title);
+}
+
+/* Attributes & properties */
+.hljs-attr,
+.hljs-property {
+  color: var(--hljs-attr);
+}
+
+/* HTML/XML tags */
+.hljs-tag,
+.hljs-name,
+.hljs-selector-tag {
+  color: var(--hljs-tag);
+}
