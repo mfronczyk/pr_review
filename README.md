@@ -28,11 +28,13 @@ A sample PR Review session in the app:
     - [Lint \& Format](#lint--format)
     - [Testing](#testing)
   - [Development Usage](#development-usage)
+  - [Key Features](#key-features)
   - [Server Configuration \& Integrations](#server-configuration--integrations)
     - [1. Point to a Repository](#1-point-to-a-repository)
     - [2. Override the LLM Model](#2-override-the-llm-model)
     - [3. GitHub Authentication (Required)](#3-github-authentication-required)
-    - [4. Opencode Integration (Required)](#4-opencode-integration-required)
+    - [4. Opencode Integration (Optional)](#4-opencode-integration-optional)
+  - [Manual LLM Workflow](#manual-llm-workflow)
 
 ---
 
@@ -123,9 +125,17 @@ npm run test:ui        # Interactive mode (Vitest UI)
 
 All apps follow strict TypeScript, formatting and style guidelines (see [AGENTS.md](./AGENTS.md) for further details).
 
+## Key Features
+
+- **Tag-based review** -- the LLM (or the reviewer manually) splits a PR's diff into thematic tags (e.g., "database", "birthdate-validation-fix", "tests") so the reviewer can examine one concern at a time instead of reviewing files linearly.
+- **Branch metadata** -- the dashboard and review page display source/target branch, commit count, and last sync time for each PR.
+- **SHA-based git operations** -- diffs and logs are computed from exact commit SHAs fetched from GitHub, without creating local branches. This ensures reproducibility even when the target branch advances.
+- **Optional LLM** -- the server starts and is fully usable without an LLM configured. Set `LLM_MODEL` to enable automated analysis, or use the manual workflow described below.
+- **Manual LLM workflow** -- download a self-contained tagging prompt, paste it into any LLM (e.g., VS Code Copilot Chat), and upload the JSON result back into the app. See [Manual LLM Workflow](#manual-llm-workflow) for details.
+
 ## Server Configuration & Integrations
 
-The server requires additional setup for repository targeting, LLM model overrides, and authentication with GitHub and Opencode.
+The server requires additional setup for repository targeting and GitHub authentication. LLM integration is optional.
 
 ### 1. Point to a Repository
 
@@ -138,12 +148,13 @@ REPO_PATH=/absolute/path/to/your/repo npm run dev
 
 ### 2. Override the LLM Model
 
-You can select a different Large Language Model (LLM) at startup by setting the `LLM_MODEL` environment variable in the format `provider/model`:
+You can select a Large Language Model (LLM) at startup by setting the `LLM_MODEL` environment variable in the format `provider/model`:
 
 ```bash
 LLM_MODEL=openai/gpt-4-1106-preview npm run dev
 ```
 - Available models are printed on server startup. Examples: `openai/gpt-4-turbo`, `local/my-custom-model`, etc.
+- When `LLM_MODEL` is **not set**, the server starts without LLM capabilities. The "Analyze with LLM" button is hidden in the UI, and the analyze endpoint returns 503. All other functionality (sync, review, manual analysis) works normally.
 
 ### 3. GitHub Authentication (Required)
 
@@ -153,8 +164,19 @@ LLM_MODEL=openai/gpt-4-1106-preview npm run dev
   2. Run `gh auth login` and follow the prompts to authenticate for your target GitHub host (e.g., `github.com`).
   3. The server will use this token at runtime—no need to manually pass it in most cases.
 
-### 4. Opencode Integration (Required)
+### 4. Opencode Integration (Optional)
 
-- The server depends on [Opencode](https://opencode.ai) for LLM integration and must be installed/configured on the host machine.
-- If Opencode is missing or not configured properly, the server startup will fail with an explanatory error.
+- The server uses [Opencode](https://opencode.ai) for LLM integration. It must be installed and configured on the host machine if you want to use the automated "Analyze with LLM" feature.
+- If `LLM_MODEL` is not set or Opencode is not available, the server starts without LLM capabilities. You can still use the [manual LLM workflow](#manual-llm-workflow).
 - Please refer to [Opencode docs](https://opencode.ai) for installation and configuration instructions.
+
+## Manual LLM Workflow
+
+If you don't have Opencode configured, or prefer to use a different LLM (e.g., VS Code Copilot Chat, ChatGPT), you can analyze PRs manually:
+
+1. **Download the prompt** -- on the review page, click "Download Prompt" in the toolbar. This downloads a self-contained `.txt` file with the full tagging prompt and all diff chunks included.
+2. **Paste into your LLM** -- open the `.txt` file and paste its contents into your preferred LLM chat interface.
+3. **Get the JSON response** -- the LLM will respond with a JSON object containing tag definitions and chunk assignments. Save this as a `.json` file, or ask your LLM agent to save the output directly as a JSON file.
+4. **Upload the results** -- back on the review page, click "Upload Results" and select the `.json` file. The system validates the structure and stores the tags, replacing any existing tags for the affected chunks.
+
+The imported JSON must match the `RawTaggingResult` format (snake_case fields). The system requires at least 50% of chunks to match by file path and chunk index.
