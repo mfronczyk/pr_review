@@ -272,8 +272,11 @@ Not every dimension applies to every chunk. Assign tags from multiple dimensions
 2. **Assign Chunks**: For EVERY chunk in the diff, assign:
    - One or more tags (from the tags you defined in step 1)
    - A priority (high/medium/low) based on review importance
-   - A review_note ONLY for high-priority chunks or chunks needing special attention (null otherwise)
-   Every chunk MUST receive at least one tag. Do not skip any chunks.
+   - A review_note ONLY for high-priority chunks or chunks needing special attention (null otherwise).
+     The review note should tell the reviewer what to focus on — e.g., a subtle edge case,
+     a potential race condition, a security concern, or a behavioral change that may not be obvious
+     from the diff alone.
+    Every chunk MUST receive at least one tag. Do not skip any chunks.
 
 ## Formatting
 
