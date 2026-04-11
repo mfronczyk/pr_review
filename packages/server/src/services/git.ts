@@ -123,12 +123,17 @@ export class GitService {
    * Get the commit log between two refs.
    * Returns an array of "short-hash subject" strings, oldest first.
    *
+   * Uses the two-dot range (baseRef..headRef) which shows commits reachable
+   * from headRef but not from baseRef — i.e., only the PR's own commits.
+   * (The three-dot range would include commits on the base branch side of
+   * a symmetric difference, inflating the count.)
+   *
    * @param baseRef - The base ref (e.g. 'origin/main')
    * @param headRef - The head ref (e.g. 'pr-123')
    * @returns Array of commit subject lines with short hashes
    */
   async getCommitLog(baseRef: string, headRef: string): Promise<string[]> {
-    const output = await this.git('log', '--format=%h %s', '--reverse', `${baseRef}...${headRef}`);
+    const output = await this.git('log', '--format=%h %s', '--reverse', `${baseRef}..${headRef}`);
     return output
       .trim()
       .split('\n')
