@@ -258,7 +258,8 @@ Bad examples: "bugfix", "logic-change", "validation-fix", "feature"
 Examples: refactoring, rename, style/formatting
 
 ### Category
-Examples: tests, docs, config, security, authentication, performance, observability, model,
+Examples: tests, unit-tests, integration-tests, docs, config, security, authentication,
+performance, observability, model, error-handling, parsing, validation,
 ci-cd, kubernetes, agent-files, dependencies, packaging
 
 Not every dimension applies to every chunk. Assign tags from multiple dimensions when applicable.

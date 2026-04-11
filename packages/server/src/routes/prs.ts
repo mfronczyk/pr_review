@@ -380,10 +380,27 @@ export function createPrRoutes(
         return;
       }
 
+      // Reject empty arrays — an import with no tags or no assignments is almost
+      // certainly a broken LLM response, not an intentional "clear everything".
+      if (body.tags.length === 0) {
+        res.status(400).json({ error: 'tags array must not be empty' });
+        return;
+      }
+      if (body.chunk_assignments.length === 0) {
+        res.status(400).json({ error: 'chunk_assignments array must not be empty' });
+        return;
+      }
+
       for (const tag of body.tags) {
         if (typeof tag.name !== 'string' || typeof tag.description !== 'string') {
           res.status(400).json({
             error: 'Invalid tag: each tag must have "name" (string) and "description" (string)',
+          });
+          return;
+        }
+        if (tag.name.trim().length === 0) {
+          res.status(400).json({
+            error: 'Invalid tag: tag name must not be blank',
           });
           return;
         }
@@ -399,6 +416,44 @@ export function createPrRoutes(
           res.status(400).json({
             error:
               'Invalid chunk_assignment: each must have "file_path" (string), "chunk_index" (number), "tags" (string[]), "priority" (string), and "review_note" (string|null)',
+          });
+          return;
+        }
+      }
+
+      // Check that assignments actually resolve to chunks in the database.
+      // If fewer than 50% of the PR's chunks are covered, the LLM likely
+      // hallucinated file paths / chunk indices — reject to avoid silently
+      // wiping existing tagging with near-empty results.
+      const totalChunks = (
+        db.prepare('SELECT COUNT(*) as count FROM chunks WHERE pr_id = ?').get(prId) as {
+          count: number;
+        }
+      ).count;
+
+      if (totalChunks > 0) {
+        const getChunk = db.prepare(
+          'SELECT id FROM chunks WHERE pr_id = ? AND file_path = ? AND chunk_index = ?',
+        );
+        let matched = 0;
+        const unmatchedPaths: string[] = [];
+        for (const a of body.chunk_assignments) {
+          const chunk = getChunk.get(prId, a.file_path, a.chunk_index) as
+            | { id: number }
+            | undefined;
+          if (chunk) {
+            matched++;
+          } else {
+            unmatchedPaths.push(`${a.file_path}:${a.chunk_index}`);
+          }
+        }
+
+        const coverageRatio = matched / totalChunks;
+        if (coverageRatio < 0.5) {
+          const preview = unmatchedPaths.slice(0, 5).join(', ');
+          const extra = unmatchedPaths.length > 5 ? ` (and ${unmatchedPaths.length - 5} more)` : '';
+          res.status(400).json({
+            error: `Import rejected: only ${matched}/${totalChunks} chunks matched (${Math.round(coverageRatio * 100)}% coverage, minimum is 50%). Unmatched assignments: ${preview}${extra}. The LLM may have hallucinated file paths or chunk indices — check that the analysis was generated from the current diff.`,
           });
           return;
         }

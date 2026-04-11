@@ -299,7 +299,7 @@ const Sidebar = memo(function Sidebar({
           {pr.owner}/{pr.repo}#{pr.number}
         </p>
         <p
-          className="mt-1 truncate text-[11px] text-fg-faint"
+          className="mt-1 truncate text-[11px] text-fg-tertiary"
           title={`${pr.headRef} \u2192 ${pr.baseRef}`}
         >
           {pr.headRef} &rarr; {pr.baseRef}
@@ -309,7 +309,7 @@ const Sidebar = memo(function Sidebar({
             </span>
           )}
         </p>
-        <p className="mt-0.5 text-[10px] text-fg-faint" title={`Last synced: ${pr.syncedAt}`}>
+        <p className="mt-0.5 text-[10px] text-fg-tertiary" title={`Last synced: ${pr.syncedAt}`}>
           Synced {formatRelativeTime(pr.syncedAt)}
         </p>
         <div className="mt-2 flex items-center gap-2">

@@ -154,13 +154,16 @@ function PrRow({
               <StateBadge state={pr.state} />
             </div>
             <h3 className="mt-1 truncate text-sm font-medium text-fg-primary">{pr.title}</h3>
-            <div className="mt-1 flex items-center gap-3 text-xs text-fg-muted">
-              <span>by {pr.author}</span>
-              <span className="text-fg-faint" title={`${pr.headRef} \u2192 ${pr.baseRef}`}>
+            <div className="mt-1 flex items-center gap-3 text-xs text-fg-muted min-w-0">
+              <span className="flex-shrink-0">by {pr.author}</span>
+              <span
+                className="truncate text-fg-tertiary"
+                title={`${pr.headRef} \u2192 ${pr.baseRef}`}
+              >
                 {pr.headRef} &rarr; {pr.baseRef}
               </span>
               {pr.commitCount > 0 && (
-                <span className="text-fg-faint">
+                <span className="flex-shrink-0 text-fg-tertiary">
                   {pr.commitCount} commit{pr.commitCount !== 1 ? 's' : ''}
                 </span>
               )}
@@ -174,7 +177,7 @@ function PrRow({
               </span>
               <ProgressBar approved={pr.approvedChunks} total={pr.totalChunks} />
             </div>
-            <span className="text-[10px] text-fg-faint" title={`Last synced: ${pr.syncedAt}`}>
+            <span className="text-[10px] text-fg-tertiary" title={`Last synced: ${pr.syncedAt}`}>
               Synced {formatRelativeTime(pr.syncedAt)}
             </span>
           </div>

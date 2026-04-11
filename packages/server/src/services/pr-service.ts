@@ -132,6 +132,13 @@ export class PrService {
         prId,
       );
 
+    // Skip diff recomputation for terminal states — the diff won't change,
+    // and the git refs (pull/<N>/head) may no longer be fetchable if the
+    // source branch or fork was deleted.
+    if (state === 'merged' || state === 'closed') {
+      return { added: 0, removed: 0, updated: 0, outdated: 0 };
+    }
+
     // Recompute diff and update chunks
     const updatedPr = this.db.prepare('SELECT * FROM prs WHERE id = ?').get(prId) as PrDbRow;
     const result = await this.fetchAndStoreDiff(updatedPr);
