@@ -124,55 +124,48 @@ function validateRepoPath(repoPath: string): string {
 if (process.env.NODE_ENV !== 'test') {
   const remoteUrl = validateRepoPath(REPO_PATH);
 
-  // Validate OpenCode SDK and get active model info
-  let modelInfo: LlmModelInfo;
-  let availableModels: LlmModelInfo[];
-  try {
-    console.log('Checking OpenCode configuration...');
-    const validation = await validateOpenCode();
-    modelInfo = validation.activeModel;
-    availableModels = validation.availableModels;
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    console.error('\nError: OpenCode is not properly configured.\n');
-    console.error(`  ${msg}\n`);
-    console.error('Make sure OpenCode is installed and configured:');
-    console.error('  https://opencode.ai\n');
-    process.exit(1);
-  }
+  // LLM is optional: only initialize when LLM_MODEL is explicitly set
+  let modelInfo: LlmModelInfo | null = null;
 
-  // Allow overriding the model via LLM_MODEL env variable
   const llmModelEnv = process.env.LLM_MODEL;
   if (llmModelEnv) {
+    // LLM_MODEL is set — parse it and optionally validate against OpenCode
     const slashIdx = llmModelEnv.indexOf('/');
     if (slashIdx <= 0) {
       console.error('\nError: LLM_MODEL must be in "provider/model" format.\n');
       console.error(`  LLM_MODEL: ${llmModelEnv}\n`);
-      console.error('Available models:');
-      for (const m of availableModels) {
-        console.error(`  ${m.provider}/${m.model}`);
-      }
-      console.error('\nExample:');
-      console.error(
-        `  LLM_MODEL=${availableModels[0].provider}/${availableModels[0].model} npm run dev\n`,
-      );
+      console.error('Example:');
+      console.error('  LLM_MODEL=anthropic/claude-sonnet-4-20250514 npm run dev\n');
       process.exit(1);
     }
     modelInfo = {
       provider: llmModelEnv.substring(0, slashIdx),
       model: llmModelEnv.substring(slashIdx + 1),
     };
-    console.log(`OpenCode OK (LLM_MODEL override): ${modelInfo.provider}/${modelInfo.model}`);
-  } else {
-    console.log(`OpenCode OK: ${modelInfo.provider}/${modelInfo.model}`);
-  }
 
-  // Log available models for discoverability
-  if (availableModels.length > 1) {
-    console.log('Available models:');
-    for (const m of availableModels) {
-      console.log(`  ${m.provider}/${m.model}`);
+    // Validate OpenCode SDK is available when LLM is requested
+    try {
+      console.log('Checking OpenCode configuration...');
+      const validation = await validateOpenCode();
+      console.log(`OpenCode OK (LLM_MODEL): ${modelInfo.provider}/${modelInfo.model}`);
+
+      // Log available models for discoverability
+      if (validation.availableModels.length > 1) {
+        console.log('Available models:');
+        for (const m of validation.availableModels) {
+          console.log(`  ${m.provider}/${m.model}`);
+        }
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error('\nError: OpenCode is not properly configured.\n');
+      console.error(`  ${msg}\n`);
+      console.error('Make sure OpenCode is installed and configured:');
+      console.error('  https://opencode.ai\n');
+      process.exit(1);
     }
+  } else {
+    console.log('Running without LLM (set LLM_MODEL=provider/model to enable LLM analysis)');
   }
 
   const dbPath = path.join(REPO_PATH, '.pr-review', 'data.db');

@@ -3,7 +3,7 @@
  * Shows file diffs with tag-based grouping sidebar and chunk review controls.
  */
 
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import * as api from '@/api';
@@ -429,11 +429,16 @@ function Toolbar({
   onToggleShowUnresolved,
   onSync,
   onAnalyze,
+  onDownloadPrompt,
+  onImportResults,
   onPublishAll,
   onSubmitReview,
   syncing,
   analyzing,
+  downloadingPrompt,
+  importing,
   unpublishedCount,
+  llmAvailable,
   modelLabel,
   additions,
   deletions,
@@ -444,16 +449,22 @@ function Toolbar({
   onToggleShowUnresolved: () => void;
   onSync: () => void;
   onAnalyze: () => void;
+  onDownloadPrompt: () => void;
+  onImportResults: (file: File) => void;
   onPublishAll: () => Promise<void>;
   onSubmitReview: () => void;
   syncing: boolean;
   analyzing: boolean;
+  downloadingPrompt: boolean;
+  importing: boolean;
   unpublishedCount: number;
+  llmAvailable: boolean;
   modelLabel: string | null;
   additions: number;
   deletions: number;
 }): React.ReactElement {
   const [publishing, setPublishing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handlePublish(): Promise<void> {
     setPublishing(true);
@@ -461,6 +472,17 @@ function Toolbar({
       await onPublishAll();
     } finally {
       setPublishing(false);
+    }
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>): void {
+    const file = e.target.files?.[0];
+    if (file) {
+      onImportResults(file);
+      // Reset so the same file can be re-selected
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   }
 
@@ -510,6 +532,7 @@ function Toolbar({
         >
           Submit Review
         </button>
+        <span className="mx-1 h-4 w-px bg-border-primary" />
         <button
           type="button"
           onClick={onSync}
@@ -518,14 +541,42 @@ function Toolbar({
         >
           {syncing ? 'Fetching...' : 'Fetch Latest'}
         </button>
+        {llmAvailable && (
+          <button
+            type="button"
+            onClick={onAnalyze}
+            disabled={analyzing}
+            className="rounded-md bg-purple-600 px-3 py-1 text-xs text-white hover:bg-purple-500 disabled:opacity-50 dark:bg-purple-700 dark:hover:bg-purple-600"
+          >
+            {analyzing ? 'Analyzing...' : `Analyze with LLM${modelLabel ? ` (${modelLabel})` : ''}`}
+          </button>
+        )}
+        <span className="mx-1 h-4 w-px bg-border-primary" />
         <button
           type="button"
-          onClick={onAnalyze}
-          disabled={analyzing}
-          className="rounded-md bg-purple-600 px-3 py-1 text-xs text-white hover:bg-purple-500 disabled:opacity-50 dark:bg-purple-700 dark:hover:bg-purple-600"
+          onClick={onDownloadPrompt}
+          disabled={downloadingPrompt}
+          title="Download the tagging prompt as a text file to paste into VS Code Copilot Chat"
+          className="rounded-md border border-border-primary bg-surface-secondary px-3 py-1 text-xs text-fg-secondary hover:bg-surface-tertiary disabled:opacity-50"
         >
-          {analyzing ? 'Analyzing...' : `Analyze with LLM${modelLabel ? ` (${modelLabel})` : ''}`}
+          {downloadingPrompt ? 'Preparing...' : 'Download Prompt'}
         </button>
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={importing}
+          title="Upload JSON results from manual LLM analysis"
+          className="rounded-md border border-border-primary bg-surface-secondary px-3 py-1 text-xs text-fg-secondary hover:bg-surface-tertiary disabled:opacity-50"
+        >
+          {importing ? 'Importing...' : 'Upload Results'}
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json"
+          onChange={handleFileChange}
+          className="hidden"
+        />
       </div>
     </div>
   );
@@ -547,6 +598,8 @@ export function ReviewPage(): React.ReactElement {
   const [showUnresolved, setShowUnresolved] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [downloadingPrompt, setDownloadingPrompt] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -710,6 +763,39 @@ export function ReviewPage(): React.ReactElement {
       reload();
     });
     setAnalyzing(false);
+  }
+
+  async function handleDownloadPrompt(): Promise<void> {
+    setDownloadingPrompt(true);
+    await withErrorHandling(async () => {
+      const { prompt, filename } = await api.getPrompt(prId);
+      const blob = new Blob([prompt], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+    setDownloadingPrompt(false);
+  }
+
+  async function handleImportResults(file: File): Promise<void> {
+    setImporting(true);
+    await withErrorHandling(async () => {
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error('Invalid JSON file. Please upload the raw JSON output from the LLM.');
+      }
+      await api.importAnalysis(prId, parsed as import('@pr-review/shared').ImportAnalysisRequest);
+      reload();
+    });
+    setImporting(false);
   }
 
   const handleToggleApproved = useCallback(
@@ -1006,11 +1092,16 @@ export function ReviewPage(): React.ReactElement {
           onToggleShowUnresolved={() => setShowUnresolved((v) => !v)}
           onSync={handleSync}
           onAnalyze={handleAnalyze}
+          onDownloadPrompt={handleDownloadPrompt}
+          onImportResults={handleImportResults}
           onPublishAll={handlePublishAll}
           onSubmitReview={() => setReviewDialogOpen(true)}
           syncing={syncing}
           analyzing={analyzing}
+          downloadingPrompt={downloadingPrompt}
+          importing={importing}
           unpublishedCount={unpublishedCount}
+          llmAvailable={modelInfo != null}
           modelLabel={modelLabel}
           additions={prWithLocalProgress.additions}
           deletions={prWithLocalProgress.deletions}

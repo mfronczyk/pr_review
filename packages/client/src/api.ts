@@ -7,9 +7,11 @@ import type {
   AddPrRequest,
   ChunkWithDetails,
   Comment,
+  ImportAnalysisRequest,
   LlmAnalysisResult,
   LlmModelInfo,
   PrWithProgress,
+  PromptDownloadResponse,
   PullRequest,
   ReviewEvent,
   ServerConfig,
@@ -75,6 +77,20 @@ export function syncPr(id: number): Promise<SyncResult> {
 
 export function analyzePr(id: number): Promise<LlmAnalysisResult> {
   return request(`/api/prs/${id}/analyze`, { method: 'POST' });
+}
+
+export function getPrompt(prId: number): Promise<PromptDownloadResponse> {
+  return request(`/api/prs/${prId}/prompt`);
+}
+
+export function importAnalysis(
+  prId: number,
+  data: ImportAnalysisRequest,
+): Promise<LlmAnalysisResult> {
+  return request(`/api/prs/${prId}/import-analysis`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 }
 
 export function getTagSummaries(prId: number): Promise<TagSummary[]> {

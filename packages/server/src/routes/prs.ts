@@ -1,7 +1,9 @@
 import type {
   AddPrRequest,
+  ImportAnalysisRequest,
   LlmModelInfo,
   PrWithProgress,
+  PromptDownloadResponse,
   ReviewEvent,
   SubmitReviewRequest,
   TagSummary,
@@ -11,7 +13,12 @@ import { Router } from 'express';
 import { ChunkService } from '../services/chunk-service.js';
 import { parseDiff } from '../services/diff-parser.js';
 import { GitService } from '../services/git.js';
-import { analyzePr } from '../services/llm-analyzer.js';
+import {
+  analyzePr,
+  buildExportablePrompt,
+  mapTaggingResult,
+  storeChunkMetadata,
+} from '../services/llm-analyzer.js';
 import { PrService } from '../services/pr-service.js';
 
 export function createPrRoutes(
@@ -137,6 +144,14 @@ export function createPrRoutes(
    */
   router.post('/:id/analyze', async (req, res) => {
     try {
+      if (!modelInfo) {
+        res.status(503).json({
+          error:
+            'LLM analysis is not available. Start the server with LLM_MODEL=provider/model to enable it.',
+        });
+        return;
+      }
+
       const prId = Number(req.params.id);
       const pr = prService.getPr(prId);
       if (!pr) {
@@ -303,6 +318,128 @@ export function createPrRoutes(
         return;
       }
       res.status(500).json({ error: message });
+    }
+  });
+
+  /**
+   * GET /api/prs/:id/prompt
+   * Generate a self-contained tagging prompt for manual LLM analysis.
+   * The user downloads this as a .txt file and pastes it into VS Code Copilot Chat.
+   */
+  router.get('/:id/prompt', async (req, res) => {
+    try {
+      const prId = Number(req.params.id);
+      const pr = prService.getPr(prId);
+      if (!pr) {
+        res.status(404).json({ error: 'PR not found' });
+        return;
+      }
+
+      // Get the diff from local git (same logic as analyze endpoint)
+      const git = new GitService({ repoPath });
+      const localBranch = `pr-${pr.number}`;
+      const baseRef = `origin/${pr.baseRef}`;
+
+      const branchExists = await git.refExists(localBranch);
+      if (!branchExists) {
+        await git.fetchPr(pr.number);
+      }
+
+      const rawDiff = await git.diff(baseRef, localBranch);
+      const fileDiffs = parseDiff(rawDiff);
+      const commitMessages = await git.getCommitLog(baseRef, localBranch);
+
+      const prompt = buildExportablePrompt(
+        pr.title,
+        pr.body,
+        pr.author,
+        pr.baseRef,
+        pr.headRef,
+        commitMessages,
+        fileDiffs,
+      );
+
+      const filename = `pr-${pr.number}-tagging-prompt.txt`;
+      const result: PromptDownloadResponse = { prompt, filename };
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /**
+   * POST /api/prs/:id/import-analysis
+   * Import manually-generated LLM analysis results.
+   * Accepts the raw JSON output from VS Code Copilot Chat and processes it
+   * through the same pipeline as the automated analysis.
+   */
+  router.post('/:id/import-analysis', (req, res) => {
+    try {
+      const prId = Number(req.params.id);
+      const pr = prService.getPr(prId);
+      if (!pr) {
+        res.status(404).json({ error: 'PR not found' });
+        return;
+      }
+
+      const body = req.body as ImportAnalysisRequest;
+
+      // Validate structure
+      if (!Array.isArray(body.tags) || !Array.isArray(body.chunk_assignments)) {
+        res.status(400).json({
+          error: 'Invalid format: expected { tags: [...], chunk_assignments: [...] }',
+        });
+        return;
+      }
+
+      for (const tag of body.tags) {
+        if (typeof tag.name !== 'string' || typeof tag.description !== 'string') {
+          res.status(400).json({
+            error: 'Invalid tag: each tag must have "name" (string) and "description" (string)',
+          });
+          return;
+        }
+      }
+
+      for (const assignment of body.chunk_assignments) {
+        if (
+          typeof assignment.file_path !== 'string' ||
+          typeof assignment.chunk_index !== 'number' ||
+          !Array.isArray(assignment.tags) ||
+          typeof assignment.priority !== 'string'
+        ) {
+          res.status(400).json({
+            error:
+              'Invalid chunk_assignment: each must have "file_path" (string), "chunk_index" (number), "tags" (string[]), "priority" (string), and "review_note" (string|null)',
+          });
+          return;
+        }
+      }
+
+      // Record the LLM run as a manual import
+      const run = db
+        .prepare("INSERT INTO llm_runs (pr_id, status) VALUES (?, 'completed') RETURNING id")
+        .get(prId) as { id: number };
+
+      db.prepare("UPDATE llm_runs SET finished_at = datetime('now') WHERE id = ?").run(run.id);
+
+      // Map snake_case → camelCase and validate priorities
+      const mapped = mapTaggingResult(body);
+
+      // Store chunk metadata and tags (same pipeline as automated analysis)
+      storeChunkMetadata(db, prId, run.id, mapped.chunkAssignments, mapped.tags);
+
+      console.log(
+        `[prs] Manual import for PR #${prId}: ${mapped.chunkAssignments.length} chunks tagged, ${mapped.tags.length} tags defined`,
+      );
+
+      res.json({
+        tags: mapped.tags,
+        chunkAssignments: mapped.chunkAssignments,
+        tagSummaries: [],
+      });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
     }
   });
 

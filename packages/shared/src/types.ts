@@ -193,6 +193,33 @@ export interface ServerConfig {
   repoPath: string;
 }
 
+// ── Manual Analysis (Prompt Download / Import) ─────────────
+
+/**
+ * Request body for importing manually-generated LLM analysis results.
+ * Uses snake_case keys to match the raw LLM JSON output format,
+ * so users can paste the LLM response directly without transformation.
+ */
+export interface ImportAnalysisRequest {
+  tags: Array<{ name: string; description: string }>;
+  chunk_assignments: Array<{
+    file_path: string;
+    chunk_index: number;
+    tags: string[];
+    priority: string;
+    review_note: string | null;
+  }>;
+}
+
+/**
+ * Response from the prompt download endpoint.
+ * Contains the full prompt text and a suggested filename.
+ */
+export interface PromptDownloadResponse {
+  prompt: string;
+  filename: string;
+}
+
 // ── Tag Summary ────────────────────────────────────────────
 
 export interface TagSummary {

@@ -368,6 +368,71 @@ Analyze this pull request. Define tags and assign every chunk.`;
 }
 
 /**
+ * Build a self-contained prompt for manual LLM analysis via VS Code Copilot Chat.
+ *
+ * Merges the system prompt, JSON output format instructions (with a concrete example),
+ * and the full PR diff into a single text that the user can paste into any LLM chat UI.
+ * The LLM should respond with raw JSON matching the RawTaggingResult shape.
+ */
+export function buildExportablePrompt(
+  prTitle: string,
+  prBody: string,
+  prAuthor: string,
+  baseBranch: string,
+  headBranch: string,
+  commitMessages: string[],
+  fileDiffs: ParsedFileDiff[],
+): string {
+  const systemPrompt = buildTaggingSystemPrompt();
+  const userPrompt = buildAnalysisPrompt(
+    prTitle,
+    prBody,
+    prAuthor,
+    baseBranch,
+    headBranch,
+    commitMessages,
+    fileDiffs,
+  );
+
+  return `${systemPrompt}
+
+## Output Format
+
+Respond with ONLY a JSON object. No markdown code fences, no commentary, no explanation.
+The JSON must have this exact structure:
+
+{
+  "tags": [
+    {
+      "name": "kebab-case-tag-name",
+      "description": "Brief description of what this tag covers"
+    }
+  ],
+  "chunk_assignments": [
+    {
+      "file_path": "exact/path/from/diff.ts",
+      "chunk_index": 0,
+      "tags": ["tag-name-1", "tag-name-2"],
+      "priority": "high",
+      "review_note": "Markdown note for the reviewer, or null if not high-priority"
+    }
+  ]
+}
+
+Rules:
+- "tags" must define ALL tags before they are referenced in chunk_assignments.
+- "chunk_assignments" must include EVERY chunk from the diff. Do not skip any.
+- "file_path" and "chunk_index" must match the diff exactly.
+- "priority" must be one of: "high", "medium", "low".
+- "review_note" should be a markdown string for high-priority chunks, null otherwise.
+- Each chunk must have at least one tag.
+
+---
+
+${userPrompt}`;
+}
+
+/**
  * Shared tool-disable map for all OpenCode prompts.
  * Disables all built-in tools so the LLM generates structured JSON only.
  */
@@ -802,7 +867,7 @@ function createEventLogger(
 
 // ── Internal Types ──────────────────────────────────────────
 
-interface RawTaggingResult {
+export interface RawTaggingResult {
   tags: Array<{
     name: string;
     description: string;
@@ -818,7 +883,7 @@ interface RawTaggingResult {
 
 // ── Helpers ─────────────────────────────────────────────────
 
-function mapTaggingResult(raw: RawTaggingResult): {
+export function mapTaggingResult(raw: RawTaggingResult): {
   tags: LlmTagDefinition[];
   chunkAssignments: LlmChunkAssignment[];
 } {
@@ -837,12 +902,12 @@ function mapTaggingResult(raw: RawTaggingResult): {
   };
 }
 
-function validatePriority(p: string): Priority {
+export function validatePriority(p: string): Priority {
   if (p === 'high' || p === 'medium' || p === 'low') return p;
   return 'medium';
 }
 
-function storeChunkMetadata(
+export function storeChunkMetadata(
   db: Database.Database,
   prId: number,
   llmRunId: number,
