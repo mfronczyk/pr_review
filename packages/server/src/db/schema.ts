@@ -60,6 +60,7 @@ function createTables(db: Database.Database): void {
       diff_text     TEXT NOT NULL,
       start_line    INTEGER NOT NULL DEFAULT 0,
       end_line      INTEGER NOT NULL DEFAULT 0,
+      file_status   TEXT NOT NULL DEFAULT 'modified',
       approved      INTEGER NOT NULL DEFAULT 0,
       approved_at   TEXT,
       UNIQUE(pr_id, file_path, chunk_index)
@@ -153,5 +154,11 @@ function runMigrations(db: Database.Database): void {
     db.exec("ALTER TABLE prs ADD COLUMN synced_at TEXT NOT NULL DEFAULT ''");
     // Backfill existing rows with their updated_at value
     db.exec("UPDATE prs SET synced_at = updated_at WHERE synced_at = ''");
+  }
+
+  // Migration: add file_status column to chunks table
+  const chunkCols = db.pragma('table_info(chunks)') as Array<{ name: string }>;
+  if (!chunkCols.some((c) => c.name === 'file_status')) {
+    db.exec("ALTER TABLE chunks ADD COLUMN file_status TEXT NOT NULL DEFAULT 'modified'");
   }
 }

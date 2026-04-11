@@ -13,7 +13,13 @@ import { SubmitReviewDialog } from '@/components/SubmitReviewDialog';
 import { formatRelativeTime } from '@/format-time';
 import { useAsync } from '@/hooks/use-async';
 import { getTagColor } from '@/tag-colors';
-import type { ChunkWithDetails, PrWithProgress, ReviewEvent, Tag } from '@pr-review/shared';
+import type {
+  ChunkWithDetails,
+  FileStatus,
+  PrWithProgress,
+  ReviewEvent,
+  Tag,
+} from '@pr-review/shared';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -113,9 +119,10 @@ interface TreeNode {
   fullPath: string;
   children: Map<string, TreeNode>;
   isFile: boolean;
+  fileStatus?: FileStatus;
 }
 
-function buildFileTree(files: string[]): TreeNode {
+function buildFileTree(files: string[], fileStatusMap: Map<string, FileStatus>): TreeNode {
   const root: TreeNode = { name: '', fullPath: '', children: new Map(), isFile: false };
   for (const filePath of files) {
     const parts = filePath.split('/');
@@ -136,6 +143,7 @@ function buildFileTree(files: string[]): TreeNode {
       if (isLast) {
         child.isFile = true;
         child.fullPath = filePath;
+        child.fileStatus = fileStatusMap.get(filePath);
       }
       current = child;
     }
@@ -157,6 +165,7 @@ function collapseTree(node: TreeNode): TreeNode {
         fullPath: only.fullPath,
         children: only.children,
         isFile: only.isFile,
+        fileStatus: only.fileStatus,
       };
     }
     // Recursively collapse children
@@ -178,6 +187,20 @@ function sortTreeNodes(a: TreeNode, b: TreeNode): number {
   return a.name.localeCompare(b.name);
 }
 
+/** Get the file status indicator character and color class for the sidebar tree. */
+function fileStatusIndicator(status?: FileStatus): { char: string; colorClass: string } {
+  switch (status) {
+    case 'added':
+      return { char: 'A', colorClass: 'text-green-500' };
+    case 'deleted':
+      return { char: 'D', colorClass: 'text-red-500' };
+    case 'renamed':
+      return { char: 'R', colorClass: 'text-blue-500' };
+    default:
+      return { char: 'M', colorClass: 'text-fg-faint' };
+  }
+}
+
 function FileTreeNode({
   node,
   depth,
@@ -197,6 +220,7 @@ function FileTreeNode({
   const isCollapsed = collapsedDirs.has(node.fullPath);
 
   if (node.isFile) {
+    const { char, colorClass } = fileStatusIndicator(node.fileStatus);
     return (
       <button
         type="button"
@@ -207,7 +231,7 @@ function FileTreeNode({
         style={{ paddingLeft: `${depth * 12 + 4}px` }}
         title={node.fullPath}
       >
-        <span className="flex-shrink-0 text-fg-faint">~</span>
+        <span className={`flex-shrink-0 text-[10px] font-medium ${colorClass}`}>{char}</span>
         <span className="truncate">{node.name}</span>
       </button>
     );
@@ -248,6 +272,7 @@ const Sidebar = memo(function Sidebar({
   pr,
   groups,
   files,
+  fileStatusMap,
   activeFilter,
   activeFile,
   onFilterByTag,
@@ -258,6 +283,7 @@ const Sidebar = memo(function Sidebar({
   pr: PrWithProgress;
   groups: GroupInfo[];
   files: string[];
+  fileStatusMap: Map<string, FileStatus>;
   activeFilter: { type: 'tag'; value: string } | null;
   activeFile: string | null;
   onFilterByTag: (tagName: string) => void;
@@ -267,8 +293,11 @@ const Sidebar = memo(function Sidebar({
 }): React.ReactElement {
   const [filesExpanded, setFilesExpanded] = useState(true);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
+  const [groupsHeight, setGroupsHeight] = useState<number | null>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
 
-  const fileTree = useMemo(() => buildFileTree(files), [files]);
+  const fileTree = useMemo(() => buildFileTree(files, fileStatusMap), [files, fileStatusMap]);
 
   function handleToggleDir(dirPath: string): void {
     setCollapsedDirs((prev) => {
@@ -282,13 +311,53 @@ const Sidebar = memo(function Sidebar({
     });
   }
 
+  // Drag-to-resize handler for the divider between Groups and Files
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const sidebar = sidebarRef.current;
+    if (!sidebar) return;
+
+    const groupsEl = sidebar.querySelector('[data-section="groups"]') as HTMLElement | null;
+    if (!groupsEl) return;
+
+    dragRef.current = { startY: e.clientY, startHeight: groupsEl.offsetHeight };
+
+    const handleMouseMove = (ev: MouseEvent): void => {
+      if (!dragRef.current || !sidebar) return;
+      const delta = ev.clientY - dragRef.current.startY;
+      const sidebarHeight = sidebar.offsetHeight;
+      // Minimum 60px, maximum 80% of sidebar
+      const newHeight = Math.max(
+        60,
+        Math.min(sidebarHeight * 0.8, dragRef.current.startHeight + delta),
+      );
+      setGroupsHeight(newHeight);
+    };
+
+    const handleMouseUp = (): void => {
+      dragRef.current = null;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+
   const sortedRootChildren = useMemo(
     () => Array.from(fileTree.children.values()).sort(sortTreeNodes),
     [fileTree],
   );
 
   return (
-    <aside className="flex w-64 flex-shrink-0 flex-col border-r border-border-primary bg-surface-primary">
+    <aside
+      ref={sidebarRef}
+      className="flex w-64 flex-shrink-0 flex-col border-r border-border-primary bg-surface-primary"
+    >
       {/* PR info — fixed */}
       <div className="flex-shrink-0 border-b border-border-secondary p-4">
         <Link to="/" className="text-xs text-fg-muted hover:text-fg-secondary">
@@ -303,12 +372,12 @@ const Sidebar = memo(function Sidebar({
           title={`${pr.headRef} \u2192 ${pr.baseRef}`}
         >
           {pr.headRef} &rarr; {pr.baseRef}
-          {pr.commitCount > 0 && (
-            <span className="ml-1.5">
-              &middot; {pr.commitCount} commit{pr.commitCount !== 1 ? 's' : ''}
-            </span>
-          )}
         </p>
+        {pr.commitCount > 0 && (
+          <p className="mt-0.5 text-[11px] text-fg-tertiary">
+            {pr.commitCount} commit{pr.commitCount !== 1 ? 's' : ''}
+          </p>
+        )}
         <p className="mt-0.5 text-[10px] text-fg-tertiary" title={`Last synced: ${pr.syncedAt}`}>
           Synced {formatRelativeTime(pr.syncedAt)}
         </p>
@@ -327,10 +396,11 @@ const Sidebar = memo(function Sidebar({
         </div>
       </div>
 
-      {/* Groups section — scrollable, max 40% of sidebar */}
+      {/* Groups section — resizable via drag handle */}
       <div
-        className="flex-shrink-0 overflow-y-auto border-b border-border-secondary p-4"
-        style={{ maxHeight: '40%' }}
+        data-section="groups"
+        className="flex-shrink-0 overflow-y-auto p-4"
+        style={groupsHeight != null ? { height: `${groupsHeight}px` } : { maxHeight: '40%' }}
       >
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-fg-muted">
           Groups
@@ -404,6 +474,14 @@ const Sidebar = memo(function Sidebar({
           )}
         </div>
       </div>
+
+      {/* Drag handle to resize Groups / Files split */}
+      <div
+        onMouseDown={handleDragStart}
+        className="flex-shrink-0 cursor-row-resize border-y border-border-secondary bg-surface-secondary hover:bg-border-primary"
+        style={{ height: '5px' }}
+        title="Drag to resize"
+      />
 
       {/* Files section — takes remaining space, scrollable */}
       <div className="flex-1 overflow-y-auto p-4">
@@ -721,6 +799,19 @@ export function ReviewPage(): React.ReactElement {
     for (const c of source) seen.add(c.filePath);
     return Array.from(seen).sort();
   }, [chunks, activeFilter]);
+
+  // Build a map of file path → file status for sidebar indicators.
+  // Uses the first chunk's status for each file (all chunks in a file share the same status).
+  const fileStatusMap = useMemo((): Map<string, FileStatus> => {
+    const map = new Map<string, FileStatus>();
+    if (!chunks) return map;
+    for (const c of chunks) {
+      if (!map.has(c.filePath)) {
+        map.set(c.filePath, c.fileStatus);
+      }
+    }
+    return map;
+  }, [chunks]);
 
   // Derive PR progress from local chunks state — avoids refetching PR on every toggle
   const prWithLocalProgress = useMemo((): PrWithProgress | null => {
@@ -1089,6 +1180,7 @@ export function ReviewPage(): React.ReactElement {
         pr={prWithLocalProgress}
         groups={groups}
         files={files}
+        fileStatusMap={fileStatusMap}
         activeFilter={activeFilter}
         activeFile={activeFile}
         onFilterByTag={handleFilterByTag}
@@ -1146,6 +1238,11 @@ export function ReviewPage(): React.ReactElement {
                         {activeGroup.tag.name}
                       </h2>
                     </div>
+                    {activeGroup.tag.description && (
+                      <p className="text-xs text-fg-muted mb-1 ml-[18px]">
+                        {activeGroup.tag.description}
+                      </p>
+                    )}
                     {activeGroup.summary && (
                       <div className="rounded-lg border border-border-secondary bg-surface-secondary px-4 py-2">
                         <Markdown

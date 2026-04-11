@@ -30,6 +30,8 @@ export type PrState = 'open' | 'closed' | 'merged' | 'draft';
 
 // ── Chunk ───────────────────────────────────────────────────
 
+export type FileStatus = 'added' | 'modified' | 'deleted' | 'renamed';
+
 export interface Chunk {
   id: number;
   prId: number;
@@ -39,6 +41,7 @@ export interface Chunk {
   diffText: string;
   startLine: number;
   endLine: number;
+  fileStatus: FileStatus;
   approved: boolean;
   approvedAt: string | null;
 }

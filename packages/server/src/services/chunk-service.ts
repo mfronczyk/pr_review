@@ -4,6 +4,7 @@ import type {
   ChunkWithDetails,
   Comment,
   DiffSide,
+  FileStatus,
   Priority,
   Tag,
 } from '@pr-review/shared';
@@ -227,6 +228,7 @@ interface ChunkDbRow {
   diff_text: string;
   start_line: number;
   end_line: number;
+  file_status: string;
   approved: number;
   approved_at: string | null;
 }
@@ -273,6 +275,7 @@ function mapChunkRow(row: ChunkDbRow): Chunk {
     diffText: row.diff_text,
     startLine: row.start_line,
     endLine: row.end_line,
+    fileStatus: row.file_status as FileStatus,
     approved: Boolean(row.approved),
     approvedAt: row.approved_at,
   };

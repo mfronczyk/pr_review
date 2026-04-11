@@ -49,6 +49,25 @@ describe('ChunkService', () => {
       expect(chunks[0].comments).toEqual([]);
     });
 
+    it('should return fileStatus defaulting to modified', () => {
+      const chunks = service.getChunksForPr(prId);
+      for (const chunk of chunks) {
+        expect(chunk.fileStatus).toBe('modified');
+      }
+    });
+
+    it('should return correct fileStatus when explicitly set', () => {
+      // Insert a chunk with 'added' status
+      db.prepare(
+        `INSERT INTO chunks (pr_id, file_path, chunk_index, content_hash, diff_text, start_line, end_line, file_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(prId, 'src/new-file.py', 0, 'hash_new', '+new file content', 1, 5, 'added');
+
+      const chunks = service.getChunksForPr(prId);
+      const newFileChunk = chunks.find((c) => c.filePath === 'src/new-file.py');
+      expect(newFileChunk?.fileStatus).toBe('added');
+    });
+
     it('should include comment side field for proper thread grouping', () => {
       const chunks = service.getChunksForPr(prId);
       const chunkId = chunks[0].id;

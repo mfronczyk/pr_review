@@ -203,6 +203,7 @@ export class PrService {
       diffText: string;
       startLine: number;
       endLine: number;
+      fileStatus?: string;
     }>,
   ): SyncResult {
     // Get existing chunks for this PR
@@ -237,7 +238,7 @@ export class PrService {
         'UPDATE chunks SET file_path = ?, chunk_index = -1 WHERE id = ?',
       );
       const updatePosition = this.db.prepare(
-        'UPDATE chunks SET file_path = ?, chunk_index = ?, start_line = ?, end_line = ? WHERE id = ?',
+        'UPDATE chunks SET file_path = ?, chunk_index = ?, start_line = ?, end_line = ?, file_status = ? WHERE id = ?',
       );
 
       // First pass: move all survivors to sentinel positions
@@ -255,17 +256,20 @@ export class PrService {
       for (const chunk of newChunks) {
         const existing = existingByHash.get(chunk.contentHash);
         if (existing) {
+          const statusChanged = existing.file_status !== (chunk.fileStatus ?? 'modified');
           if (
             existing.file_path !== chunk.filePath ||
             existing.chunk_index !== chunk.chunkIndex ||
             existing.start_line !== chunk.startLine ||
-            existing.end_line !== chunk.endLine
+            existing.end_line !== chunk.endLine ||
+            statusChanged
           ) {
             updatePosition.run(
               chunk.filePath,
               chunk.chunkIndex,
               chunk.startLine,
               chunk.endLine,
+              chunk.fileStatus ?? 'modified',
               existing.id,
             );
             updated++;
@@ -276,8 +280,8 @@ export class PrService {
 
       // 3. Insert genuinely new chunks (hash not seen before).
       const insertChunk = this.db.prepare(`
-        INSERT INTO chunks (pr_id, file_path, chunk_index, content_hash, diff_text, start_line, end_line)
-        VALUES (@prId, @filePath, @chunkIndex, @contentHash, @diffText, @startLine, @endLine)
+        INSERT INTO chunks (pr_id, file_path, chunk_index, content_hash, diff_text, start_line, end_line, file_status)
+        VALUES (@prId, @filePath, @chunkIndex, @contentHash, @diffText, @startLine, @endLine, @fileStatus)
       `);
 
       for (const chunk of newChunks) {
@@ -290,6 +294,7 @@ export class PrService {
             diffText: chunk.diffText,
             startLine: chunk.startLine,
             endLine: chunk.endLine,
+            fileStatus: chunk.fileStatus ?? 'modified',
           });
           added++;
         }
@@ -422,6 +427,7 @@ interface ChunkDbRow {
   diff_text: string;
   start_line: number;
   end_line: number;
+  file_status: string;
   approved: number;
   approved_at: string | null;
 }

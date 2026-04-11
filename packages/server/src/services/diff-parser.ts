@@ -11,6 +11,7 @@ export interface ParsedChunk {
   contentHash: string;
   startLine: number;
   endLine: number;
+  fileStatus: 'added' | 'modified' | 'deleted' | 'renamed';
 }
 
 /**
@@ -58,6 +59,7 @@ export function parseDiff(diffText: string): ParsedFileDiff[] {
         contentHash: contentHash(text),
         startLine: currentHunkStart,
         endLine: currentHunkEnd,
+        fileStatus: currentFile.status,
       });
       chunkIndex++;
       currentHunkLines = [];

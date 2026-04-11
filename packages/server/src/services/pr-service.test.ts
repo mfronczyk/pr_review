@@ -25,6 +25,7 @@ interface ChunkInput {
   diffText: string;
   startLine: number;
   endLine: number;
+  fileStatus?: string;
 }
 
 let db: Database.Database;
@@ -66,6 +67,7 @@ function getChunks(): Array<{
   approved: number;
   start_line: number;
   end_line: number;
+  file_status: string;
 }> {
   return db
     .prepare('SELECT * FROM chunks WHERE pr_id = ? ORDER BY file_path, chunk_index')
@@ -77,6 +79,7 @@ function getChunks(): Array<{
     approved: number;
     start_line: number;
     end_line: number;
+    file_status: string;
   }>;
 }
 
@@ -370,6 +373,54 @@ describe('PrService.reconcileChunks', () => {
     // Confirm B is gone
     const bExists = db.prepare('SELECT id FROM chunks WHERE id = ?').get(idB);
     expect(bExists).toBeUndefined();
+  });
+});
+
+describe('PrService.reconcileChunks – file_status', () => {
+  it('should store file_status when inserting new chunks', () => {
+    const addedChunk: ChunkInput = {
+      ...chunkA,
+      fileStatus: 'added',
+    };
+
+    service.reconcileChunks(prId, [addedChunk]);
+    const chunks = getChunks();
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].file_status).toBe('added');
+  });
+
+  it('should default file_status to modified when not provided', () => {
+    service.reconcileChunks(prId, [chunkA]);
+    const chunks = getChunks();
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].file_status).toBe('modified');
+  });
+
+  it('should update file_status when it changes on sync', () => {
+    // First sync: chunk is 'modified'
+    service.reconcileChunks(prId, [{ ...chunkA, fileStatus: 'modified' }]);
+    const before = getChunks();
+    expect(before[0].file_status).toBe('modified');
+
+    // Second sync: same content but status changed to 'renamed'
+    service.reconcileChunks(prId, [{ ...chunkA, fileStatus: 'renamed' }]);
+    const after = getChunks();
+    expect(after[0].file_status).toBe('renamed');
+    expect(after[0].id).toBe(before[0].id); // same row
+  });
+
+  it('should store different statuses for different files', () => {
+    const addedChunk: ChunkInput = { ...chunkA, fileStatus: 'added' };
+    const deletedChunk: ChunkInput = { ...chunkB, fileStatus: 'deleted' };
+
+    service.reconcileChunks(prId, [addedChunk, deletedChunk]);
+    const chunks = getChunks();
+    expect(chunks).toHaveLength(2);
+
+    const chunkARow = chunks.find((c) => c.content_hash === 'hashA');
+    const chunkBRow = chunks.find((c) => c.content_hash === 'hashB');
+    expect(chunkARow?.file_status).toBe('added');
+    expect(chunkBRow?.file_status).toBe('deleted');
   });
 });
 
