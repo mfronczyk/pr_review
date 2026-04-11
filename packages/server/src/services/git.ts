@@ -29,21 +29,41 @@ export class GitService {
   }
 
   /**
-   * Fetch the PR head ref from the remote.
-   * Uses GitHub's magic refs: `pull/<number>/head`
+   * Fetch the PR head ref from the remote and return the resolved SHA.
+   * Uses GitHub's magic refs: `pull/<number>/head`.
+   * Does NOT create a local branch — the SHA is used directly for
+   * diff, log, and file-content operations.
    *
    * @param prNumber - The PR number
    * @param remote - The git remote name (default: 'origin')
-   * @returns The local branch name created
+   * @returns The resolved commit SHA
    */
   async fetchPr(prNumber: number, remote = 'origin'): Promise<string> {
-    const localBranch = `pr-${prNumber}`;
     try {
-      await this.git('fetch', remote, `pull/${prNumber}/head:${localBranch}`, '--force');
+      await this.git('fetch', remote, `pull/${prNumber}/head`);
     } catch (err) {
       throw this.wrapFetchError(err, remote);
     }
-    return localBranch;
+    // FETCH_HEAD now points to the PR's tip commit — resolve to a full SHA
+    return this.getHeadSha('FETCH_HEAD');
+  }
+
+  /**
+   * Ensure a specific commit SHA is available locally.
+   * Fetches it from the remote if necessary.
+   *
+   * @param sha - The commit SHA to ensure is fetched
+   * @param remote - The git remote name (default: 'origin')
+   */
+  async ensureShaFetched(sha: string, remote = 'origin'): Promise<void> {
+    // Check if the SHA is already available locally
+    if (await this.refExists(sha)) return;
+    try {
+      await this.git('fetch', remote, sha);
+    } catch {
+      // Some servers don't allow fetching by SHA; this is a best-effort
+      // fallback — caller should have the SHA from a prior fetchPr()
+    }
   }
 
   /**

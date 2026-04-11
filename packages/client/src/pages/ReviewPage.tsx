@@ -10,6 +10,7 @@ import * as api from '@/api';
 import { DiffViewer } from '@/components/DiffViewer';
 import { Markdown } from '@/components/Markdown';
 import { SubmitReviewDialog } from '@/components/SubmitReviewDialog';
+import { formatRelativeTime } from '@/format-time';
 import { useAsync } from '@/hooks/use-async';
 import { getTagColor } from '@/tag-colors';
 import type { ChunkWithDetails, PrWithProgress, ReviewEvent, Tag } from '@pr-review/shared';
@@ -296,6 +297,20 @@ const Sidebar = memo(function Sidebar({
         <h2 className="mt-2 truncate text-sm font-semibold text-fg-primary">{pr.title}</h2>
         <p className="mt-1 text-xs text-fg-muted">
           {pr.owner}/{pr.repo}#{pr.number}
+        </p>
+        <p
+          className="mt-1 truncate text-[11px] text-fg-faint"
+          title={`${pr.headRef} \u2192 ${pr.baseRef}`}
+        >
+          {pr.headRef} &rarr; {pr.baseRef}
+          {pr.commitCount > 0 && (
+            <span className="ml-1.5">
+              &middot; {pr.commitCount} commit{pr.commitCount !== 1 ? 's' : ''}
+            </span>
+          )}
+        </p>
+        <p className="mt-0.5 text-[10px] text-fg-faint" title={`Last synced: ${pr.syncedAt}`}>
+          Synced {formatRelativeTime(pr.syncedAt)}
         </p>
         <div className="mt-2 flex items-center gap-2">
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-tertiary">

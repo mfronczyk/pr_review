@@ -62,7 +62,8 @@ export class PrService {
         head_ref = @headRef,
         head_sha = @headSha,
         body = @body,
-        updated_at = datetime('now')
+        updated_at = datetime('now'),
+        synced_at = datetime('now')
     `);
 
     const prRow = {
@@ -118,7 +119,7 @@ export class PrService {
     this.db
       .prepare(
         `UPDATE prs SET title = ?, author = ?, state = ?, base_ref = ?, head_ref = ?,
-       head_sha = ?, body = ?, updated_at = datetime('now') WHERE id = ?`,
+       head_sha = ?, body = ?, updated_at = datetime('now'), synced_at = datetime('now') WHERE id = ?`,
       )
       .run(
         ghPr.title,
@@ -149,17 +150,24 @@ export class PrService {
   }
 
   /**
-   * Fetch the PR branch via git, compute diff, parse into chunks,
+   * Fetch the PR via git, compute diff, parse into chunks,
    * and reconcile with the database.
+   * Uses the headSha already stored in the PR row — no local branches created.
    */
   private async fetchAndStoreDiff(pr: PrDbRow): Promise<SyncResult> {
-    // Fetch PR ref from remote
+    // Fetch PR ref from remote (resolves to a SHA, no local branch)
     await this.git.fetch();
-    const localBranch = await this.git.fetchPr(pr.number);
+    await this.git.fetchPr(pr.number);
 
-    // Compute diff against base
+    // Compute diff using the known head SHA from GitHub
     const baseRef = `origin/${pr.base_ref}`;
-    const rawDiff = await this.git.diff(baseRef, localBranch);
+    const rawDiff = await this.git.diff(baseRef, pr.head_sha);
+
+    // Compute commit count while we have the refs available
+    const commits = await this.git.getCommitLog(baseRef, pr.head_sha);
+    this.db
+      .prepare("UPDATE prs SET commit_count = ?, synced_at = datetime('now') WHERE id = ?")
+      .run(commits.length, pr.id);
 
     // Parse diff into chunks
     const fileDiffs = parseDiff(rawDiff);
@@ -392,8 +400,10 @@ interface PrDbRow {
   head_sha: string;
   body: string;
   gh_host: string;
+  commit_count: number;
   created_at: string;
   updated_at: string;
+  synced_at: string;
 }
 
 interface ChunkDbRow {
@@ -436,7 +446,9 @@ function mapPrRow(row: PrDbRow): PullRequest {
     headSha: row.head_sha,
     body: row.body,
     ghHost: row.gh_host,
+    commitCount: row.commit_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    syncedAt: row.synced_at,
   };
 }

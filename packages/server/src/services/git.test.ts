@@ -24,27 +24,68 @@ describe('GitService', () => {
   });
 
   describe('fetchPr', () => {
-    it('should fetch PR ref and return local branch name', async () => {
-      mockExecFile.mockResolvedValue({ stdout: '', stderr: '' } as never);
+    it('should fetch PR ref and return resolved SHA', async () => {
+      // First call: git fetch origin pull/7272/head
+      mockExecFile.mockResolvedValueOnce({ stdout: '', stderr: '' } as never);
+      // Second call: git rev-parse FETCH_HEAD
+      mockExecFile.mockResolvedValueOnce({ stdout: 'abc123def456\n', stderr: '' } as never);
 
-      const branch = await git.fetchPr(7272);
+      const sha = await git.fetchPr(7272);
 
-      expect(branch).toBe('pr-7272');
+      expect(sha).toBe('abc123def456');
       expect(mockExecFile).toHaveBeenCalledWith(
         'git',
-        ['fetch', 'origin', 'pull/7272/head:pr-7272', '--force'],
+        ['fetch', 'origin', 'pull/7272/head'],
+        expect.objectContaining({ cwd: '/tmp/test-repo' }),
+      );
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'git',
+        ['rev-parse', 'FETCH_HEAD'],
         expect.objectContaining({ cwd: '/tmp/test-repo' }),
       );
     });
 
     it('should use custom remote', async () => {
-      mockExecFile.mockResolvedValue({ stdout: '', stderr: '' } as never);
+      mockExecFile.mockResolvedValueOnce({ stdout: '', stderr: '' } as never);
+      mockExecFile.mockResolvedValueOnce({ stdout: 'def789\n', stderr: '' } as never);
 
       await git.fetchPr(123, 'upstream');
 
       expect(mockExecFile).toHaveBeenCalledWith(
         'git',
-        ['fetch', 'upstream', 'pull/123/head:pr-123', '--force'],
+        ['fetch', 'upstream', 'pull/123/head'],
+        expect.objectContaining({ cwd: '/tmp/test-repo' }),
+      );
+    });
+  });
+
+  describe('ensureShaFetched', () => {
+    it('should skip fetch if SHA already exists locally', async () => {
+      // refExists succeeds
+      mockExecFile.mockResolvedValueOnce({ stdout: 'abc123\n', stderr: '' } as never);
+
+      await git.ensureShaFetched('abc123');
+
+      expect(mockExecFile).toHaveBeenCalledTimes(1);
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'git',
+        ['rev-parse', '--verify', 'abc123'],
+        expect.objectContaining({ cwd: '/tmp/test-repo' }),
+      );
+    });
+
+    it('should fetch SHA from remote if not available locally', async () => {
+      // refExists fails
+      mockExecFile.mockRejectedValueOnce(new Error('not valid') as never);
+      // fetch succeeds
+      mockExecFile.mockResolvedValueOnce({ stdout: '', stderr: '' } as never);
+
+      await git.ensureShaFetched('abc123');
+
+      expect(mockExecFile).toHaveBeenCalledTimes(2);
+      expect(mockExecFile).toHaveBeenCalledWith(
+        'git',
+        ['fetch', 'origin', 'abc123'],
         expect.objectContaining({ cwd: '/tmp/test-repo' }),
       );
     });

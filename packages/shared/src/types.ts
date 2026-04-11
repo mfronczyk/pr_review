@@ -20,8 +20,10 @@ export interface PullRequest {
   headSha: string;
   body: string;
   ghHost: string;
+  commitCount: number;
   createdAt: string;
   updatedAt: string;
+  syncedAt: string;
 }
 
 export type PrState = 'open' | 'closed' | 'merged' | 'draft';

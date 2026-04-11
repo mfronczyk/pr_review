@@ -44,8 +44,10 @@ function createTables(db: Database.Database): void {
       head_sha      TEXT NOT NULL DEFAULT '',
       body          TEXT NOT NULL DEFAULT '',
       gh_host       TEXT NOT NULL DEFAULT 'github.com',
+      commit_count  INTEGER NOT NULL DEFAULT 0,
       created_at    TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      synced_at     TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(owner, repo, number, gh_host)
     );
 
@@ -140,5 +142,16 @@ function runMigrations(db: Database.Database): void {
   const hasGhNodeId = cols.some((c) => c.name === 'gh_node_id');
   if (!hasGhNodeId) {
     db.exec('ALTER TABLE comments ADD COLUMN gh_node_id TEXT');
+  }
+
+  // Migration: add commit_count and synced_at columns to prs table
+  const prCols = db.pragma('table_info(prs)') as Array<{ name: string }>;
+  if (!prCols.some((c) => c.name === 'commit_count')) {
+    db.exec('ALTER TABLE prs ADD COLUMN commit_count INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!prCols.some((c) => c.name === 'synced_at')) {
+    db.exec("ALTER TABLE prs ADD COLUMN synced_at TEXT NOT NULL DEFAULT ''");
+    // Backfill existing rows with their updated_at value
+    db.exec("UPDATE prs SET synced_at = updated_at WHERE synced_at = ''");
   }
 }

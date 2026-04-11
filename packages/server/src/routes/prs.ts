@@ -159,22 +159,18 @@ export function createPrRoutes(
         return;
       }
 
-      // Get the diff from local git
+      // Get the diff using the stored head SHA
       const git = new GitService({ repoPath });
-      const localBranch = `pr-${pr.number}`;
       const baseRef = `origin/${pr.baseRef}`;
 
-      // Ensure we have the branch
-      const branchExists = await git.refExists(localBranch);
-      if (!branchExists) {
-        await git.fetchPr(pr.number);
-      }
+      // Ensure the commit is available locally
+      await git.ensureShaFetched(pr.headSha);
 
-      const rawDiff = await git.diff(baseRef, localBranch);
+      const rawDiff = await git.diff(baseRef, pr.headSha);
       const fileDiffs = parseDiff(rawDiff);
 
       // Get commit messages for additional context
-      const commitMessages = await git.getCommitLog(baseRef, localBranch);
+      const commitMessages = await git.getCommitLog(baseRef, pr.headSha);
 
       const result = await analyzePr(
         { db, repoPath },
@@ -289,15 +285,11 @@ export function createPrRoutes(
       }
 
       const git = new GitService({ repoPath });
-      const localBranch = `pr-${pr.number}`;
 
-      // Ensure the branch is available locally
-      const branchExists = await git.refExists(localBranch);
-      if (!branchExists) {
-        await git.fetchPr(pr.number);
-      }
+      // Ensure the commit is available locally
+      await git.ensureShaFetched(pr.headSha);
 
-      const fileContent = await git.getFileContent(localBranch, filePath);
+      const fileContent = await git.getFileContent(pr.headSha, filePath);
       const allLines = fileContent.split('\n');
 
       // Clamp range to actual file length
@@ -335,19 +327,15 @@ export function createPrRoutes(
         return;
       }
 
-      // Get the diff from local git (same logic as analyze endpoint)
+      // Get the diff using the stored head SHA (same logic as analyze endpoint)
       const git = new GitService({ repoPath });
-      const localBranch = `pr-${pr.number}`;
       const baseRef = `origin/${pr.baseRef}`;
 
-      const branchExists = await git.refExists(localBranch);
-      if (!branchExists) {
-        await git.fetchPr(pr.number);
-      }
+      await git.ensureShaFetched(pr.headSha);
 
-      const rawDiff = await git.diff(baseRef, localBranch);
+      const rawDiff = await git.diff(baseRef, pr.headSha);
       const fileDiffs = parseDiff(rawDiff);
-      const commitMessages = await git.getCommitLog(baseRef, localBranch);
+      const commitMessages = await git.getCommitLog(baseRef, pr.headSha);
 
       const prompt = buildExportablePrompt(
         pr.title,
