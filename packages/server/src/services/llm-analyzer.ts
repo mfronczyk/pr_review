@@ -236,8 +236,8 @@ so the reviewer can examine each dimension of the change independently. Good tag
 the reviewer focus on one concern at a time (e.g., all the database changes, then all the
 validation logic, then the tests) rather than reviewing files linearly.
 
-Use the commit messages, branch name, and PR description to understand the intent and context
-behind the changes. If the diff references functions, classes, or patterns that suggest a
+Use the diff chunks, commit messages, branch name, and PR description to understand the intent
+and context behind the changes. If the diff references functions, classes, or patterns that suggest a
 broader context (e.g., a migration pattern, a specific domain concept), factor that into
 your tagging — name tags after the actual domain concepts you see in the code.
 
@@ -258,8 +258,8 @@ Bad examples: "bugfix", "logic-change", "validation-fix", "feature"
 Examples: refactoring, rename, style/formatting
 
 ### Category
-Examples: tests, docs, config, security, performance, ci-cd, kubernetes, agent-files,
-dependencies, packaging
+Examples: tests, docs, config, security, authentication, performance, observability, model,
+ci-cd, kubernetes, agent-files, dependencies, packaging
 
 Not every dimension applies to every chunk. Assign tags from multiple dimensions when applicable.
 
