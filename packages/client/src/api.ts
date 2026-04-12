@@ -8,8 +8,6 @@ import type {
   ChunkWithDetails,
   Comment,
   ImportAnalysisRequest,
-  LlmAnalysisResult,
-  LlmModelInfo,
   PrWithProgress,
   PromptDownloadResponse,
   PullRequest,
@@ -18,7 +16,6 @@ import type {
   SubmitReviewResponse,
   SyncResult,
   Tag,
-  TagSummary,
 } from '@pr-review/shared';
 
 class ApiError extends Error {
@@ -75,26 +72,15 @@ export function syncPr(id: number): Promise<SyncResult> {
   return request(`/api/prs/${id}/sync`, { method: 'POST' });
 }
 
-export function analyzePr(id: number): Promise<LlmAnalysisResult> {
-  return request(`/api/prs/${id}/analyze`, { method: 'POST' });
-}
-
 export function getPrompt(prId: number): Promise<PromptDownloadResponse> {
   return request(`/api/prs/${prId}/prompt`);
 }
 
-export function importAnalysis(
-  prId: number,
-  data: ImportAnalysisRequest,
-): Promise<LlmAnalysisResult> {
+export function importAnalysis(prId: number, data: ImportAnalysisRequest): Promise<void> {
   return request(`/api/prs/${prId}/import-analysis`, {
     method: 'POST',
     body: JSON.stringify(data),
   });
-}
-
-export function getTagSummaries(prId: number): Promise<TagSummary[]> {
-  return request(`/api/prs/${prId}/tag-summaries`);
 }
 
 export function submitReview(
@@ -106,12 +92,6 @@ export function submitReview(
     method: 'POST',
     body: JSON.stringify({ event, body: body || undefined }),
   });
-}
-
-// ── LLM ─────────────────────────────────────────────────────
-
-export function getModelInfo(): Promise<LlmModelInfo> {
-  return request('/api/llm/model');
 }
 
 // ── Chunks ──────────────────────────────────────────────────
@@ -147,6 +127,13 @@ export function setChunkTags(id: number, tagIds: number[]): Promise<ChunkWithDet
 
 export function bulkApprove(prId: number, tagId: number): Promise<{ approved: number }> {
   return request(`/api/prs/${prId}/bulk-approve`, {
+    method: 'POST',
+    body: JSON.stringify({ tagId }),
+  });
+}
+
+export function bulkUnapprove(prId: number, tagId: number): Promise<{ unapproved: number }> {
+  return request(`/api/prs/${prId}/bulk-unapprove`, {
     method: 'POST',
     body: JSON.stringify({ tagId }),
   });

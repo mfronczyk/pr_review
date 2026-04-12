@@ -70,27 +70,6 @@ describe('GET /api/config', () => {
   });
 });
 
-describe('GET /api/llm/model', () => {
-  it('should return 503 when no model info is available', async () => {
-    const res = await request(app).get('/api/llm/model');
-    expect(res.status).toBe(503);
-    expect(res.body).toHaveProperty('error');
-  });
-
-  it('should return model info when provided at creation', async () => {
-    const appWithModel = createApp(db, '/tmp/test-repo', {
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-20250514',
-    });
-    const res = await request(appWithModel).get('/api/llm/model');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-20250514',
-    });
-  });
-});
-
 describe('GET /api/prs/:prId/tags', () => {
   it('should return empty array when no tags exist for PR', async () => {
     const res = await request(app).get('/api/prs/1/tags');
@@ -301,54 +280,6 @@ describe('Comment routes', () => {
       .post('/api/comments')
       .send({ chunkId: 1, prId: 1, body: 'No line' });
     expect(res.status).toBe(400);
-  });
-});
-
-describe('Tag summary routes', () => {
-  it('GET /api/prs/:id/tag-summaries should return empty array when no summaries exist', async () => {
-    const res = await request(app).get('/api/prs/1/tag-summaries');
-    expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body.length).toBe(0);
-  });
-
-  it('GET /api/prs/:id/tag-summaries should return stored summaries', async () => {
-    // Insert an LLM run first
-    const run = db
-      .prepare("INSERT INTO llm_runs (pr_id, status) VALUES (1, 'completed') RETURNING id")
-      .get() as { id: number };
-
-    // Create a tag for this PR (may already exist from earlier tests, so use INSERT OR IGNORE)
-    db.prepare(
-      "INSERT OR IGNORE INTO tags (pr_id, name, description) VALUES (1, 'input-validation-fix', 'Fixes input validation bugs')",
-    ).run();
-    const tag = db
-      .prepare("SELECT id FROM tags WHERE name = 'input-validation-fix' AND pr_id = 1")
-      .get() as { id: number };
-
-    // Insert a tag summary
-    db.prepare(
-      'INSERT INTO tag_summaries (pr_id, tag_id, summary, llm_run_id) VALUES (?, ?, ?, ?)',
-    ).run(1, tag.id, 'This group fixes input validation bugs in the registration flow.', run.id);
-
-    const res = await request(app).get('/api/prs/1/tag-summaries');
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(1);
-    expect(res.body[0]).toEqual({
-      tagId: tag.id,
-      tagName: 'input-validation-fix',
-      summary: 'This group fixes input validation bugs in the registration flow.',
-    });
-
-    // Cleanup
-    db.prepare('DELETE FROM tag_summaries WHERE pr_id = 1').run();
-    db.prepare(`DELETE FROM llm_runs WHERE id = ${run.id}`).run();
-  });
-
-  it('GET /api/prs/:id/tag-summaries should return empty for non-existent PR', async () => {
-    const res = await request(app).get('/api/prs/999/tag-summaries');
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual([]);
   });
 });
 

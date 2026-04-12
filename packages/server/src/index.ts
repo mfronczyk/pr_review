@@ -1,14 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { LlmModelInfo, ServerConfig } from '@pr-review/shared';
+import type { ServerConfig } from '@pr-review/shared';
 import type Database from 'better-sqlite3';
 import express from 'express';
 import { initDatabase } from './db/schema.js';
 import { createChunkRoutes } from './routes/chunks.js';
 import { createCommentRoutes } from './routes/comments.js';
 import { createPrRoutes } from './routes/prs.js';
-import { validateOpenCode } from './services/llm-analyzer.js';
 
 const PORT = Number.parseInt(process.env.PORT ?? '3420', 10);
 const REPO_PATH = process.env.REPO_PATH ?? process.cwd();
@@ -17,11 +16,7 @@ const REPO_PATH = process.env.REPO_PATH ?? process.cwd();
  * Create and configure the Express app.
  * Exported separately so tests can create an app with a custom DB.
  */
-export function createApp(
-  db: Database.Database,
-  repoPath: string,
-  modelInfo?: LlmModelInfo | null,
-): express.Express {
+export function createApp(db: Database.Database, repoPath: string): express.Express {
   const app = express();
   app.use(express.json());
 
@@ -36,17 +31,8 @@ export function createApp(
     res.json(config);
   });
 
-  // LLM model info (cached from startup validation)
-  app.get('/api/llm/model', (_req, res) => {
-    if (!modelInfo) {
-      res.status(503).json({ error: 'LLM model info not available' });
-      return;
-    }
-    res.json(modelInfo);
-  });
-
   // API routes
-  app.use('/api/prs', createPrRoutes(db, repoPath, modelInfo ?? undefined));
+  app.use('/api/prs', createPrRoutes(db, repoPath));
   app.use('/api', createChunkRoutes(db));
   app.use('/api', createCommentRoutes(db));
 
@@ -124,53 +110,9 @@ function validateRepoPath(repoPath: string): string {
 if (process.env.NODE_ENV !== 'test') {
   const remoteUrl = validateRepoPath(REPO_PATH);
 
-  // LLM is optional: only initialize when LLM_MODEL is explicitly set
-  let modelInfo: LlmModelInfo | null = null;
-
-  const llmModelEnv = process.env.LLM_MODEL;
-  if (llmModelEnv) {
-    // LLM_MODEL is set — parse it and optionally validate against OpenCode
-    const slashIdx = llmModelEnv.indexOf('/');
-    if (slashIdx <= 0) {
-      console.error('\nError: LLM_MODEL must be in "provider/model" format.\n');
-      console.error(`  LLM_MODEL: ${llmModelEnv}\n`);
-      console.error('Example:');
-      console.error('  LLM_MODEL=anthropic/claude-sonnet-4-20250514 npm run dev\n');
-      process.exit(1);
-    }
-    modelInfo = {
-      provider: llmModelEnv.substring(0, slashIdx),
-      model: llmModelEnv.substring(slashIdx + 1),
-    };
-
-    // Validate OpenCode SDK is available when LLM is requested
-    try {
-      console.log('Checking OpenCode configuration...');
-      const validation = await validateOpenCode();
-      console.log(`OpenCode OK (LLM_MODEL): ${modelInfo.provider}/${modelInfo.model}`);
-
-      // Log available models for discoverability
-      if (validation.availableModels.length > 1) {
-        console.log('Available models:');
-        for (const m of validation.availableModels) {
-          console.log(`  ${m.provider}/${m.model}`);
-        }
-      }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error('\nError: OpenCode is not properly configured.\n');
-      console.error(`  ${msg}\n`);
-      console.error('Make sure OpenCode is installed and configured:');
-      console.error('  https://opencode.ai\n');
-      process.exit(1);
-    }
-  } else {
-    console.log('Running without LLM (set LLM_MODEL=provider/model to enable LLM analysis)');
-  }
-
   const dbPath = path.join(REPO_PATH, '.pr-review', 'data.db');
   const db: Database.Database = initDatabase(dbPath);
-  const app = createApp(db, REPO_PATH, modelInfo);
+  const app = createApp(db, REPO_PATH);
 
   app.listen(PORT, () => {
     console.log(`PR Review server running at http://localhost:${PORT}`);

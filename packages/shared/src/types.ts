@@ -103,26 +103,7 @@ export interface CommentThread {
   replies: Comment[];
 }
 
-// ── LLM Model Info ──────────────────────────────────────────
-
-export interface LlmModelInfo {
-  provider: string;
-  model: string;
-}
-
-// ── LLM Run ─────────────────────────────────────────────────
-
-export type LlmRunStatus = 'running' | 'completed' | 'failed';
-
-export interface LlmRun {
-  id: number;
-  prId: number;
-  startedAt: string;
-  finishedAt: string | null;
-  status: LlmRunStatus;
-}
-
-// ── LLM Analysis Output ────────────────────────────────────
+// ── LLM Analysis ───────────────────────────────────────────
 
 export interface LlmTagDefinition {
   name: string;
@@ -140,12 +121,6 @@ export interface LlmChunkAssignment {
 export interface LlmAnalysisResult {
   tags: LlmTagDefinition[];
   chunkAssignments: LlmChunkAssignment[];
-  tagSummaries: LlmTagSummary[];
-}
-
-export interface LlmTagSummary {
-  tag: string;
-  summary: string;
 }
 
 // ── API Request/Response Types ──────────────────────────────
@@ -223,12 +198,4 @@ export interface ImportAnalysisRequest {
 export interface PromptDownloadResponse {
   prompt: string;
   filename: string;
-}
-
-// ── Tag Summary ────────────────────────────────────────────
-
-export interface TagSummary {
-  tagId: number;
-  tagName: string;
-  summary: string;
 }

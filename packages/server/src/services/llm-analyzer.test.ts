@@ -1,11 +1,12 @@
 import type BetterSqlite3 from 'better-sqlite3';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { ParsedFileDiff } from './diff-parser.js';
 import {
   buildAnalysisPrompt,
-  buildSummaryPrompt,
-  buildSummarySystemPrompt,
   buildTaggingSystemPrompt,
+  mapTaggingResult,
+  storeChunkMetadata,
+  validatePriority,
 } from './llm-analyzer.js';
 
 const SAMPLE_FILE_DIFFS: ParsedFileDiff[] = [
@@ -225,62 +226,71 @@ describe('buildTaggingSystemPrompt', () => {
   });
 });
 
-describe('buildSummarySystemPrompt', () => {
-  it('should include summarizer role', () => {
-    const system = buildSummarySystemPrompt();
+describe('validatePriority', () => {
+  it('should return valid priority values unchanged', () => {
+    expect(validatePriority('high')).toBe('high');
+    expect(validatePriority('medium')).toBe('medium');
+    expect(validatePriority('low')).toBe('low');
+  });
 
-    expect(system).toContain('senior code reviewer');
-    expect(system).toContain('summary');
+  it('should default unknown values to medium', () => {
+    expect(validatePriority('critical')).toBe('medium');
+    expect(validatePriority('')).toBe('medium');
+    expect(validatePriority('unknown')).toBe('medium');
   });
 });
 
-describe('buildSummaryPrompt', () => {
-  it('should include tag name, description, and chunk content', () => {
-    const prompt = buildSummaryPrompt(
-      'database-migration',
-      'Database schema changes',
-      [{ filePath: 'schema.ts', chunkIndex: 0, diffText: '+ALTER TABLE users ADD COLUMN email' }],
-      'Add user emails',
-      'Adds email column to users table',
-    );
+describe('mapTaggingResult', () => {
+  it('should map snake_case chunk assignments to camelCase', () => {
+    const raw = {
+      tags: [{ name: 'api', description: 'API changes' }],
+      chunk_assignments: [
+        {
+          file_path: 'src/api.ts',
+          chunk_index: 2,
+          tags: ['api'],
+          priority: 'high',
+          review_note: 'Check error handling',
+        },
+      ],
+    };
 
-    expect(prompt).toContain('database-migration');
-    expect(prompt).toContain('Database schema changes');
-    expect(prompt).toContain('schema.ts chunk 0');
-    expect(prompt).toContain('+ALTER TABLE users ADD COLUMN email');
-    expect(prompt).toContain('Add user emails');
+    const result = mapTaggingResult(raw);
+
+    expect(result.tags).toHaveLength(1);
+    expect(result.tags[0]).toEqual({ name: 'api', description: 'API changes' });
+
+    expect(result.chunkAssignments).toHaveLength(1);
+    expect(result.chunkAssignments[0]).toEqual({
+      filePath: 'src/api.ts',
+      chunkIndex: 2,
+      tags: ['api'],
+      priority: 'high',
+      reviewNote: 'Check error handling',
+    });
+  });
+
+  it('should validate and normalize priority', () => {
+    const raw = {
+      tags: [],
+      chunk_assignments: [
+        {
+          file_path: 'foo.ts',
+          chunk_index: 0,
+          tags: [],
+          priority: 'critical',
+          review_note: null,
+        },
+      ],
+    };
+
+    const result = mapTaggingResult(raw);
+    expect(result.chunkAssignments[0].priority).toBe('medium');
   });
 });
 
-describe('TAGGING_SCHEMA', () => {
-  it('should be a valid JSON schema with tags and chunk_assignments', async () => {
-    const { TAGGING_SCHEMA } = await import('./llm-analyzer.js');
+// ── storeChunkMetadata ───────────────────────────────────────
 
-    expect(TAGGING_SCHEMA.type).toBe('object');
-    expect(TAGGING_SCHEMA.required).toContain('tags');
-    expect(TAGGING_SCHEMA.required).toContain('chunk_assignments');
-    expect(TAGGING_SCHEMA.required).not.toContain('pr_summary');
-    expect(TAGGING_SCHEMA.required).not.toContain('tag_summaries');
-    expect(TAGGING_SCHEMA.properties.chunk_assignments.type).toBe('array');
-  });
-});
-
-describe('SUMMARY_SCHEMA', () => {
-  it('should be a valid JSON schema with summary field', async () => {
-    const { SUMMARY_SCHEMA } = await import('./llm-analyzer.js');
-
-    expect(SUMMARY_SCHEMA.type).toBe('object');
-    expect(SUMMARY_SCHEMA.required).toContain('summary');
-    expect(SUMMARY_SCHEMA.properties.summary.type).toBe('string');
-  });
-});
-
-// ── analyzePr two-phase pipeline ────────────────────────────
-
-/**
- * Create an in-memory SQLite database with the full schema and seed data
- * for analyzePr tests. Returns the db plus the PR id and chunk ids.
- */
 async function setupTestDb(): Promise<{
   db: BetterSqlite3.Database;
   prId: number;
@@ -289,7 +299,6 @@ async function setupTestDb(): Promise<{
   const { initDatabase } = await import('../db/schema.js');
   const db = initDatabase(':memory:');
 
-  // Insert a PR
   const pr = db
     .prepare(
       `INSERT INTO prs (owner, repo, number, title, author, base_ref, head_ref, head_sha, body)
@@ -298,7 +307,6 @@ async function setupTestDb(): Promise<{
     )
     .get() as { id: number };
 
-  // Insert chunks matching SAMPLE_FILE_DIFFS
   const insertChunk = db.prepare(
     `INSERT INTO chunks (pr_id, file_path, chunk_index, content_hash, diff_text, start_line, end_line)
      VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
@@ -337,378 +345,59 @@ async function setupTestDb(): Promise<{
   return { db, prId: pr.id, chunkIds: [chunk1.id, chunk2.id, chunk3.id] };
 }
 
-/**
- * Create a mock async-iterable event stream that properly terminates
- * when `.return()` is called — unblocking any pending `next()`.
- */
-function createMockEventStream() {
-  let resolvePending: ((v: { done: boolean; value: undefined }) => void) | null = null;
+const MOCK_ASSIGNMENTS = [
+  {
+    filePath: 'src/requests/utils.py',
+    chunkIndex: 0,
+    tags: ['type-annotations'],
+    priority: 'medium' as const,
+    reviewNote: null,
+  },
+  {
+    filePath: 'src/requests/utils.py',
+    chunkIndex: 1,
+    tags: ['type-annotations'],
+    priority: 'low' as const,
+    reviewNote: null,
+  },
+  {
+    filePath: 'src/requests/_types.py',
+    chunkIndex: 0,
+    tags: ['type-definitions'],
+    priority: 'high' as const,
+    reviewNote: 'New module — review the public API surface.',
+  },
+];
 
-  return {
-    [Symbol.asyncIterator]() {
-      return this;
-    },
-    next() {
-      return new Promise<{ done: boolean; value: undefined }>((resolve) => {
-        resolvePending = resolve;
-      });
-    },
-    return() {
-      // Unblock any pending next() call
-      resolvePending?.({ done: true, value: undefined });
-      return Promise.resolve({ done: true as const, value: undefined });
-    },
-  };
-}
+const MOCK_TAG_DEFINITIONS = [
+  { name: 'type-annotations', description: 'Type annotation additions' },
+  { name: 'type-definitions', description: 'New type definition files' },
+];
 
-/**
- * Build a mock SDK factory for analyzePr tests.
- * `promptHandler` is called for each session.prompt() call with the call args
- * and should return the structured output for that call.
- */
-function mockAnalyzerSdk(options: {
-  promptHandler: (args: {
-    sessionID: string;
-    system: string;
-    parts: Array<{ type: string; text: string }>;
-    format: { schema: unknown };
-  }) => unknown;
-  promptError?: Error;
-}) {
-  const serverClose = vi.fn();
-  let sessionCounter = 0;
-
-  return {
-    createOpencode: vi.fn().mockResolvedValue({
-      client: {
-        session: {
-          create: vi.fn().mockImplementation(({ title }: { title: string }) => {
-            sessionCounter++;
-            return Promise.resolve({
-              data: { id: `session-${sessionCounter}`, title },
-            });
-          }),
-          prompt: vi.fn().mockImplementation((args: Record<string, unknown>) => {
-            if (options.promptError) {
-              return Promise.reject(options.promptError);
-            }
-            const structured = options.promptHandler(
-              args as Parameters<typeof options.promptHandler>[0],
-            );
-            return Promise.resolve({
-              data: {
-                info: {
-                  structured,
-                  error: undefined,
-                },
-              },
-              response: { status: 200 },
-            });
-          }),
-        },
-        event: {
-          subscribe: vi.fn().mockResolvedValue({
-            stream: createMockEventStream(),
-          }),
-        },
-      },
-      server: { close: serverClose },
-    }),
-    serverClose,
-  };
-}
-
-/** Standard tagging result for tests. */
-const MOCK_TAGGING_RESULT = {
-  tags: [
-    { name: 'type-annotations', description: 'Type annotation additions' },
-    { name: 'type-definitions', description: 'New type definition files' },
-  ],
-  chunk_assignments: [
-    {
-      file_path: 'src/requests/utils.py',
-      chunk_index: 0,
-      tags: ['type-annotations'],
-      priority: 'medium',
-      review_note: null,
-    },
-    {
-      file_path: 'src/requests/utils.py',
-      chunk_index: 1,
-      tags: ['type-annotations'],
-      priority: 'low',
-      review_note: null,
-    },
-    {
-      file_path: 'src/requests/_types.py',
-      chunk_index: 0,
-      tags: ['type-definitions'],
-      priority: 'high',
-      review_note: 'New module — review the public API surface.',
-    },
-  ],
-};
-
-describe('analyzePr', () => {
-  it('should run both phases and return combined result', async () => {
+describe('storeChunkMetadata', () => {
+  it('should store chunk metadata and tags in DB', async () => {
     const { db, prId } = await setupTestDb();
 
-    const mock = mockAnalyzerSdk({
-      promptHandler: (args) => {
-        const schema = args.format.schema as { required?: string[] };
-        // Phase 1 uses TAGGING_SCHEMA (has 'chunk_assignments')
-        if (schema.required?.includes('chunk_assignments')) {
-          return MOCK_TAGGING_RESULT;
-        }
-        // Phase 2 uses SUMMARY_SCHEMA (has 'summary')
-        if (schema.required?.includes('summary')) {
-          const tagName = args.parts[0].text.match(/## Tag: (.+)/)?.[1] ?? 'unknown';
-          return { summary: `Summary for ${tagName}` };
-        }
-        throw new Error('Unexpected schema');
-      },
-    });
+    // Insert a fake llm_run
+    const run = db
+      .prepare("INSERT INTO llm_runs (pr_id, status) VALUES (?, 'completed') RETURNING id")
+      .get(prId) as { id: number };
 
-    vi.doMock('@opencode-ai/sdk/v2', () => mock);
-    const { analyzePr: analyze } = await import('./llm-analyzer.js');
+    storeChunkMetadata(db, prId, run.id, MOCK_ASSIGNMENTS, MOCK_TAG_DEFINITIONS);
 
-    const result = await analyze(
-      { db, repoPath: '/tmp/test' },
-      prId,
-      'Add types',
-      'Adds type annotations',
-      'testauthor',
-      'main',
-      'feature/types',
-      ['feat: add types'],
-      SAMPLE_FILE_DIFFS,
-    );
-
-    // Tags
-    expect(result.tags).toHaveLength(2);
-    expect(result.tags[0].name).toBe('type-annotations');
-    expect(result.tags[1].name).toBe('type-definitions');
-
-    // Chunk assignments
-    expect(result.chunkAssignments).toHaveLength(3);
-    expect(result.chunkAssignments[0]).toEqual({
-      filePath: 'src/requests/utils.py',
-      chunkIndex: 0,
-      tags: ['type-annotations'],
-      priority: 'medium',
-      reviewNote: null,
-    });
-    expect(result.chunkAssignments[2].priority).toBe('high');
-    expect(result.chunkAssignments[2].reviewNote).toBe(
-      'New module — review the public API surface.',
-    );
-
-    // Tag summaries (Phase 2)
-    expect(result.tagSummaries).toHaveLength(2);
-    expect(result.tagSummaries.find((s) => s.tag === 'type-annotations')?.summary).toBe(
-      'Summary for type-annotations',
-    );
-    expect(result.tagSummaries.find((s) => s.tag === 'type-definitions')?.summary).toBe(
-      'Summary for type-definitions',
-    );
-
-    // DB: llm_run should be completed
-    const run = db.prepare('SELECT status FROM llm_runs WHERE pr_id = ?').get(prId) as {
-      status: string;
-    };
-    expect(run.status).toBe('completed');
-
-    // DB: tags should be stored
+    // Tags should be created
     const tags = db.prepare('SELECT name FROM tags WHERE pr_id = ? ORDER BY name').all(prId) as {
       name: string;
     }[];
     expect(tags.map((t) => t.name)).toEqual(['type-annotations', 'type-definitions']);
 
-    // DB: chunk_metadata should be stored
-    const metadata = db.prepare('SELECT priority FROM chunk_metadata').all() as {
-      priority: string;
-    }[];
+    // chunk_metadata should be stored
+    const metadata = db
+      .prepare('SELECT priority, review_note FROM chunk_metadata WHERE pr_id = ?')
+      .all(prId) as { priority: string; review_note: string | null }[];
     expect(metadata).toHaveLength(3);
 
-    // DB: tag_summaries should be stored
-    const summaries = db.prepare('SELECT summary FROM tag_summaries WHERE pr_id = ?').all(prId) as {
-      summary: string;
-    }[];
-    expect(summaries).toHaveLength(2);
-
-    // Server should be closed
-    expect(mock.serverClose).toHaveBeenCalled();
-
-    db.close();
-    vi.doUnmock('@opencode-ai/sdk/v2');
-  });
-
-  it('should handle Phase 2 partial failure gracefully', async () => {
-    const { db, prId } = await setupTestDb();
-
-    let summaryCallCount = 0;
-    const mock = mockAnalyzerSdk({
-      promptHandler: (args) => {
-        const schema = args.format.schema as { required?: string[] };
-        if (schema.required?.includes('chunk_assignments')) {
-          return MOCK_TAGGING_RESULT;
-        }
-        if (schema.required?.includes('summary')) {
-          summaryCallCount++;
-          // Fail the second summary call
-          if (summaryCallCount === 2) {
-            throw new Error('Provider timeout');
-          }
-          const tagName = args.parts[0].text.match(/## Tag: (.+)/)?.[1] ?? 'unknown';
-          return { summary: `Summary for ${tagName}` };
-        }
-        throw new Error('Unexpected schema');
-      },
-    });
-
-    vi.doMock('@opencode-ai/sdk/v2', () => mock);
-    const { analyzePr: analyze } = await import('./llm-analyzer.js');
-
-    const result = await analyze(
-      { db, repoPath: '/tmp/test' },
-      prId,
-      'Add types',
-      'Adds type annotations',
-      'testauthor',
-      'main',
-      'feature/types',
-      [],
-      SAMPLE_FILE_DIFFS,
-    );
-
-    // Only 1 of 2 summaries should succeed
-    expect(result.tagSummaries).toHaveLength(1);
-    expect(result.tagSummaries[0].tag).toBe('type-annotations');
-
-    // Tags and assignments should still be complete
-    expect(result.tags).toHaveLength(2);
-    expect(result.chunkAssignments).toHaveLength(3);
-
-    // Run should still be marked completed (partial summaries are OK)
-    const run = db.prepare('SELECT status FROM llm_runs WHERE pr_id = ?').get(prId) as {
-      status: string;
-    };
-    expect(run.status).toBe('completed');
-
-    db.close();
-    vi.doUnmock('@opencode-ai/sdk/v2');
-  });
-
-  it('should mark run as failed when Phase 1 errors', async () => {
-    const { db, prId } = await setupTestDb();
-
-    const mock = mockAnalyzerSdk({
-      promptHandler: () => {
-        throw new Error('LLM provider unavailable');
-      },
-    });
-
-    vi.doMock('@opencode-ai/sdk/v2', () => mock);
-    const { analyzePr: analyze } = await import('./llm-analyzer.js');
-
-    await expect(
-      analyze(
-        { db, repoPath: '/tmp/test' },
-        prId,
-        'Add types',
-        'Body',
-        'testauthor',
-        'main',
-        'feature/types',
-        [],
-        SAMPLE_FILE_DIFFS,
-      ),
-    ).rejects.toThrow('LLM provider unavailable');
-
-    // DB: run should be marked failed
-    const run = db.prepare('SELECT status FROM llm_runs WHERE pr_id = ?').get(prId) as {
-      status: string;
-    };
-    expect(run.status).toBe('failed');
-
-    // Server should still be closed
-    expect(mock.serverClose).toHaveBeenCalled();
-
-    db.close();
-    vi.doUnmock('@opencode-ai/sdk/v2');
-  });
-
-  it('should pass model override to both phases', async () => {
-    const { db, prId } = await setupTestDb();
-
-    const promptCalls: Array<{ model?: { providerID: string; modelID: string } }> = [];
-    const mock = mockAnalyzerSdk({
-      promptHandler: (args) => {
-        promptCalls.push(args as unknown as (typeof promptCalls)[0]);
-        const schema = args.format.schema as { required?: string[] };
-        if (schema.required?.includes('chunk_assignments')) {
-          return MOCK_TAGGING_RESULT;
-        }
-        return { summary: 'Test summary' };
-      },
-    });
-
-    vi.doMock('@opencode-ai/sdk/v2', () => mock);
-    const { analyzePr: analyze } = await import('./llm-analyzer.js');
-
-    await analyze(
-      { db, repoPath: '/tmp/test' },
-      prId,
-      'Add types',
-      'Body',
-      'testauthor',
-      'main',
-      'feature/types',
-      [],
-      SAMPLE_FILE_DIFFS,
-      { provider: 'openai', model: 'gpt-4o' },
-    );
-
-    // All prompt calls (1 tagging + 2 summaries) should include the model override
-    expect(promptCalls.length).toBeGreaterThanOrEqual(3);
-    for (const call of promptCalls) {
-      expect(call.model).toEqual({ providerID: 'openai', modelID: 'gpt-4o' });
-    }
-
-    db.close();
-    vi.doUnmock('@opencode-ai/sdk/v2');
-  });
-
-  it('should store chunk_tags linking chunks to tags in DB', async () => {
-    const { db, prId } = await setupTestDb();
-
-    const mock = mockAnalyzerSdk({
-      promptHandler: (args) => {
-        const schema = args.format.schema as { required?: string[] };
-        if (schema.required?.includes('chunk_assignments')) {
-          return MOCK_TAGGING_RESULT;
-        }
-        return { summary: 'Test summary' };
-      },
-    });
-
-    vi.doMock('@opencode-ai/sdk/v2', () => mock);
-    const { analyzePr: analyze } = await import('./llm-analyzer.js');
-
-    await analyze(
-      { db, repoPath: '/tmp/test' },
-      prId,
-      'Add types',
-      'Body',
-      'testauthor',
-      'main',
-      'feature/types',
-      [],
-      SAMPLE_FILE_DIFFS,
-    );
-
-    // chunk 0 (utils.py:0) and chunk 1 (utils.py:1) → type-annotations
-    // chunk 2 (_types.py:0) → type-definitions
+    // chunk_tags should link chunks to tags
     const chunkTags = db
       .prepare(
         `SELECT ct.content_hash, t.name
@@ -725,252 +414,94 @@ describe('analyzePr', () => {
     ]);
 
     db.close();
-    vi.doUnmock('@opencode-ai/sdk/v2');
   });
 
-  it('should use separate sessions for tagging and each summary', async () => {
+  it('should assign unassigned tag to chunks with no tags', async () => {
     const { db, prId } = await setupTestDb();
 
-    const sessionTitles: string[] = [];
-    const serverClose = vi.fn();
-    let sessionCounter = 0;
+    const run = db
+      .prepare("INSERT INTO llm_runs (pr_id, status) VALUES (?, 'completed') RETURNING id")
+      .get(prId) as { id: number };
 
-    const mockModule = {
-      createOpencode: vi.fn().mockResolvedValue({
-        client: {
-          session: {
-            create: vi.fn().mockImplementation(({ title }: { title: string }) => {
-              sessionCounter++;
-              sessionTitles.push(title);
-              return Promise.resolve({
-                data: { id: `session-${sessionCounter}`, title },
-              });
-            }),
-            prompt: vi.fn().mockImplementation((args: Record<string, unknown>) => {
-              const format = args.format as { schema: { required?: string[] } };
-              if (format.schema.required?.includes('chunk_assignments')) {
-                return Promise.resolve({
-                  data: { info: { structured: MOCK_TAGGING_RESULT } },
-                });
-              }
-              return Promise.resolve({
-                data: { info: { structured: { summary: 'Test summary' } } },
-              });
-            }),
-          },
-          event: {
-            subscribe: vi.fn().mockResolvedValue({
-              stream: createMockEventStream(),
-            }),
-          },
-        },
-        server: { close: serverClose },
-      }),
-    };
+    // Only assign 2 of 3 chunks
+    const partialAssignments = MOCK_ASSIGNMENTS.slice(0, 2);
+    storeChunkMetadata(db, prId, run.id, partialAssignments, MOCK_TAG_DEFINITIONS);
 
-    vi.doMock('@opencode-ai/sdk/v2', () => mockModule);
-    const { analyzePr: analyze } = await import('./llm-analyzer.js');
+    // The third chunk should get the 'unassigned' tag
+    const unassignedTag = db
+      .prepare("SELECT id FROM tags WHERE name = 'unassigned' AND pr_id = ?")
+      .get(prId) as { id: number } | undefined;
+    expect(unassignedTag).toBeDefined();
+    if (!unassignedTag) return;
 
-    await analyze(
-      { db, repoPath: '/tmp/test' },
-      prId,
-      'Add types',
-      'Body',
-      'testauthor',
-      'main',
-      'feature/types',
-      [],
-      SAMPLE_FILE_DIFFS,
-    );
-
-    // 1 tagging session + 2 summary sessions = 3 total
-    expect(sessionTitles).toHaveLength(3);
-    expect(sessionTitles[0]).toContain('Tagging');
-    expect(sessionTitles).toContainEqual('Summary: type-annotations');
-    expect(sessionTitles).toContainEqual('Summary: type-definitions');
+    const unassignedChunkTags = db
+      .prepare(
+        `SELECT ct.content_hash FROM chunk_tags ct
+         WHERE ct.pr_id = ? AND ct.tag_id = ?`,
+      )
+      .all(prId, unassignedTag.id) as { content_hash: string }[];
+    expect(unassignedChunkTags).toHaveLength(1);
+    expect(unassignedChunkTags[0].content_hash).toBe('ghi789');
 
     db.close();
-    vi.doUnmock('@opencode-ai/sdk/v2');
   });
-});
 
-// ── validateOpenCode ────────────────────────────────────────
+  it('should replace existing tags on re-run', async () => {
+    const { db, prId } = await setupTestDb();
 
-/**
- * Helper to create a mock SDK module with configurable config/providers responses.
- */
-function mockSdk(options: {
-  configModel?: string;
-  providers?: Array<{ id: string; name: string; models: Record<string, { name: string }> }>;
-  defaultMap?: Record<string, string>;
-}) {
-  const serverClose = vi.fn();
-  return {
-    createOpencode: vi.fn().mockResolvedValue({
-      client: {
-        config: {
-          get: vi.fn().mockResolvedValue({
-            data: { model: options.configModel },
-          }),
-          providers: vi.fn().mockResolvedValue({
-            data: {
-              providers: options.providers ?? [],
-              default: options.defaultMap ?? {},
-            },
-          }),
-        },
+    const run1 = db
+      .prepare("INSERT INTO llm_runs (pr_id, status) VALUES (?, 'completed') RETURNING id")
+      .get(prId) as { id: number };
+
+    storeChunkMetadata(db, prId, run1.id, MOCK_ASSIGNMENTS, MOCK_TAG_DEFINITIONS);
+
+    // Re-run with different tags
+    const run2 = db
+      .prepare("INSERT INTO llm_runs (pr_id, status) VALUES (?, 'completed') RETURNING id")
+      .get(prId) as { id: number };
+
+    const newAssignments = [
+      {
+        filePath: 'src/requests/utils.py',
+        chunkIndex: 0,
+        tags: ['refactoring'],
+        priority: 'low' as const,
+        reviewNote: null,
       },
-      server: { close: serverClose },
-    }),
-    serverClose,
-  };
-}
+      {
+        filePath: 'src/requests/utils.py',
+        chunkIndex: 1,
+        tags: ['refactoring'],
+        priority: 'low' as const,
+        reviewNote: null,
+      },
+      {
+        filePath: 'src/requests/_types.py',
+        chunkIndex: 0,
+        tags: ['refactoring'],
+        priority: 'medium' as const,
+        reviewNote: null,
+      },
+    ];
 
-describe('validateOpenCode', () => {
-  it('should return model info from config model override', async () => {
-    const mock = mockSdk({
-      configModel: 'anthropic/claude-sonnet-4-20250514',
-      providers: [
-        {
-          id: 'anthropic',
-          name: 'Anthropic',
-          models: { 'claude-sonnet-4-20250514': { name: 'Claude Sonnet' } },
-        },
-      ],
-    });
-    vi.doMock('@opencode-ai/sdk/v2', () => mock);
-
-    // Re-import to pick up the mock
-    const { validateOpenCode: validate } = await import('./llm-analyzer.js');
-    const result = await validate();
-
-    expect(result.activeModel).toEqual({
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-20250514',
-    });
-    expect(result.availableModels).toHaveLength(1);
-    expect(mock.serverClose).toHaveBeenCalled();
-
-    vi.doUnmock('@opencode-ai/sdk/v2');
-  });
-
-  it('should fall back to default provider/model from providers list', async () => {
-    const mock = mockSdk({
-      configModel: undefined,
-      providers: [
-        {
-          id: 'openai',
-          name: 'OpenAI',
-          models: { 'gpt-4o': { name: 'GPT-4o' } },
-        },
-      ],
-      defaultMap: { chat: 'openai/gpt-4o' },
-    });
-    vi.doMock('@opencode-ai/sdk/v2', () => mock);
-
-    const { validateOpenCode: validate } = await import('./llm-analyzer.js');
-    const result = await validate();
-
-    expect(result.activeModel).toEqual({ provider: 'openai', model: 'gpt-4o' });
-    expect(result.availableModels).toEqual([{ provider: 'openai', model: 'gpt-4o' }]);
-    expect(mock.serverClose).toHaveBeenCalled();
-
-    vi.doUnmock('@opencode-ai/sdk/v2');
-  });
-
-  it('should use first provider model when default is just a provider ID', async () => {
-    const mock = mockSdk({
-      configModel: undefined,
-      providers: [
-        {
-          id: 'anthropic',
-          name: 'Anthropic',
-          models: {
-            'claude-sonnet-4-20250514': { name: 'Claude Sonnet' },
-            'claude-haiku-4-20250414': { name: 'Claude Haiku' },
-          },
-        },
-      ],
-      defaultMap: { chat: 'anthropic' },
-    });
-    vi.doMock('@opencode-ai/sdk/v2', () => mock);
-
-    const { validateOpenCode: validate } = await import('./llm-analyzer.js');
-    const result = await validate();
-
-    expect(result.activeModel.provider).toBe('anthropic');
-    expect(result.activeModel.model).toBeTruthy();
-    expect(result.availableModels).toHaveLength(2);
-    expect(mock.serverClose).toHaveBeenCalled();
-
-    vi.doUnmock('@opencode-ai/sdk/v2');
-  });
-
-  it('should return all available models across providers', async () => {
-    const mock = mockSdk({
-      configModel: undefined,
-      providers: [
-        {
-          id: 'anthropic',
-          name: 'Anthropic',
-          models: { 'claude-sonnet-4-20250514': { name: 'Claude Sonnet' } },
-        },
-        {
-          id: 'openai',
-          name: 'OpenAI',
-          models: { 'gpt-4o': { name: 'GPT-4o' } },
-        },
-      ],
-      defaultMap: { chat: 'anthropic/claude-sonnet-4-20250514' },
-    });
-    vi.doMock('@opencode-ai/sdk/v2', () => mock);
-
-    const { validateOpenCode: validate } = await import('./llm-analyzer.js');
-    const result = await validate();
-
-    expect(result.availableModels).toEqual([
-      { provider: 'anthropic', model: 'claude-sonnet-4-20250514' },
-      { provider: 'openai', model: 'gpt-4o' },
+    storeChunkMetadata(db, prId, run2.id, newAssignments, [
+      { name: 'refactoring', description: 'Refactoring changes' },
     ]);
-    expect(mock.serverClose).toHaveBeenCalled();
 
-    vi.doUnmock('@opencode-ai/sdk/v2');
-  });
+    // Only 'refactoring' tag should be assigned to all chunks now
+    const chunkTags = db
+      .prepare(
+        `SELECT t.name FROM chunk_tags ct
+         JOIN tags t ON ct.tag_id = t.id
+         WHERE ct.pr_id = ?
+         GROUP BY t.name`,
+      )
+      .all(prId) as { name: string }[];
 
-  it('should throw when no providers are configured', async () => {
-    const mock = mockSdk({
-      configModel: undefined,
-      providers: [],
-      defaultMap: {},
-    });
-    vi.doMock('@opencode-ai/sdk/v2', () => mock);
+    expect(chunkTags.map((t) => t.name)).toContain('refactoring');
+    // Old tags should no longer be assigned (chunk_tags cleared and re-assigned)
+    expect(chunkTags.map((t) => t.name)).not.toContain('type-annotations');
 
-    const { validateOpenCode: validate } = await import('./llm-analyzer.js');
-
-    await expect(validate()).rejects.toThrow('No LLM providers configured');
-    expect(mock.serverClose).toHaveBeenCalled();
-
-    vi.doUnmock('@opencode-ai/sdk/v2');
-  });
-
-  it('should always close the server even on error', async () => {
-    const serverClose = vi.fn();
-    const createOpencode = vi.fn().mockResolvedValue({
-      client: {
-        config: {
-          get: vi.fn(),
-          providers: vi.fn().mockRejectedValue(new Error('connection failed')),
-        },
-      },
-      server: { close: serverClose },
-    });
-    vi.doMock('@opencode-ai/sdk/v2', () => ({ createOpencode }));
-
-    const { validateOpenCode: validate } = await import('./llm-analyzer.js');
-
-    await expect(validate()).rejects.toThrow('connection failed');
-    expect(serverClose).toHaveBeenCalled();
-
-    vi.doUnmock('@opencode-ai/sdk/v2');
+    db.close();
   });
 });

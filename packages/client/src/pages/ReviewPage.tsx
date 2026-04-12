@@ -8,7 +8,6 @@ import { Link, useParams } from 'react-router-dom';
 
 import * as api from '@/api';
 import { DiffViewer } from '@/components/DiffViewer';
-import { Markdown } from '@/components/Markdown';
 import { SubmitReviewDialog } from '@/components/SubmitReviewDialog';
 import { formatRelativeTime } from '@/format-time';
 import { useAsync } from '@/hooks/use-async';
@@ -27,7 +26,6 @@ interface GroupInfo {
   tag: Tag;
   chunks: ChunkWithDetails[];
   approvedCount: number;
-  summary?: string;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -279,6 +277,7 @@ const Sidebar = memo(function Sidebar({
   onScrollToFile,
   onClearFilter,
   onBulkApprove,
+  onBulkUnapprove,
 }: {
   pr: PrWithProgress;
   groups: GroupInfo[];
@@ -290,6 +289,8 @@ const Sidebar = memo(function Sidebar({
   onScrollToFile: (filePath: string) => void;
   onClearFilter: () => void;
   onBulkApprove: (tagId: number) => void;
+  onBulkUnapprove: (tagId: number) => void;
+  onBulkUnapprove: (tagId: number) => void;
 }): React.ReactElement {
   const [filesExpanded, setFilesExpanded] = useState(true);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
@@ -442,9 +443,18 @@ const Sidebar = memo(function Sidebar({
                     </span>
                   </div>
                   {allApproved ? (
-                    <span className="flex-shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-800/50 dark:text-green-300">
-                      ✓ Done
-                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onBulkUnapprove(g.tag.id);
+                      }}
+                      className="group/done flex-shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 hover:bg-red-100 hover:text-red-700 dark:bg-green-800/50 dark:text-green-300 dark:hover:bg-red-900/40 dark:hover:text-red-400"
+                      title="Unapprove all chunks in this group"
+                    >
+                      <span className="group-hover/done:hidden">✓ Done</span>
+                      <span className="hidden group-hover/done:inline">↩ Undo</span>
+                    </button>
                   ) : (
                     <button
                       type="button"
@@ -523,18 +533,14 @@ function Toolbar({
   wrapLines,
   onToggleWrapLines,
   onSync,
-  onAnalyze,
   onDownloadPrompt,
   onImportResults,
   onPublishAll,
   onSubmitReview,
   syncing,
-  analyzing,
   downloadingPrompt,
   importing,
   unpublishedCount,
-  llmAvailable,
-  modelLabel,
   additions,
   deletions,
 }: {
@@ -545,18 +551,14 @@ function Toolbar({
   wrapLines: boolean;
   onToggleWrapLines: () => void;
   onSync: () => void;
-  onAnalyze: () => void;
   onDownloadPrompt: () => void;
   onImportResults: (file: File) => void;
   onPublishAll: () => Promise<void>;
   onSubmitReview: () => void;
   syncing: boolean;
-  analyzing: boolean;
   downloadingPrompt: boolean;
   importing: boolean;
   unpublishedCount: number;
-  llmAvailable: boolean;
-  modelLabel: string | null;
   additions: number;
   deletions: number;
 }): React.ReactElement {
@@ -647,16 +649,6 @@ function Toolbar({
         >
           {syncing ? 'Fetching...' : 'Fetch Latest'}
         </button>
-        {llmAvailable && (
-          <button
-            type="button"
-            onClick={onAnalyze}
-            disabled={analyzing}
-            className="rounded-md bg-purple-600 px-3 py-1 text-xs text-white hover:bg-purple-500 disabled:opacity-50 dark:bg-purple-700 dark:hover:bg-purple-600"
-          >
-            {analyzing ? 'Analyzing...' : `Analyze with LLM${modelLabel ? ` (${modelLabel})` : ''}`}
-          </button>
-        )}
         <span className="mx-1 h-4 w-px bg-border-primary" />
         <button
           type="button"
@@ -704,7 +696,6 @@ export function ReviewPage(): React.ReactElement {
   const [showUnresolved, setShowUnresolved] = useState(false);
   const [wrapLines, setWrapLines] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
   const [downloadingPrompt, setDownloadingPrompt] = useState(false);
   const [importing, setImporting] = useState(false);
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
@@ -738,24 +729,11 @@ export function ReviewPage(): React.ReactElement {
 
   const { data: tags, reload: reloadTags } = useAsync(() => api.getTags(prId), [prId]);
 
-  const { data: tagSummaries, reload: reloadTagSummaries } = useAsync(
-    () => api.getTagSummaries(prId),
-    [prId],
-  );
-
-  const { data: modelInfo } = useAsync(() => api.getModelInfo(), []);
-
-  const modelLabel = useMemo((): string | null => {
-    if (!modelInfo) return null;
-    return `${modelInfo.provider}/${modelInfo.model}`;
-  }, [modelInfo]);
-
   const reload = useCallback(() => {
     reloadPr();
     reloadChunks();
     reloadTags();
-    reloadTagSummaries();
-  }, [reloadPr, reloadChunks, reloadTags, reloadTagSummaries]);
+  }, [reloadPr, reloadChunks, reloadTags]);
 
   /** Wraps an async action with error handling. */
   const withErrorHandling = useCallback(async (fn: () => Promise<void>): Promise<void> => {
@@ -770,13 +748,6 @@ export function ReviewPage(): React.ReactElement {
   // Build groups from tag assignments
   const groups = useMemo((): GroupInfo[] => {
     if (!chunks || !tags) return [];
-    // Build a lookup from tag name to summary
-    const summaryByTagName = new Map<string, string>();
-    if (tagSummaries) {
-      for (const ts of tagSummaries) {
-        summaryByTagName.set(ts.tagName, ts.summary);
-      }
-    }
     const map = new Map<number, GroupInfo>();
     for (const tag of tags) {
       const tagChunks = chunks.filter((c) => c.tags.some((t) => t.id === tag.id));
@@ -785,12 +756,11 @@ export function ReviewPage(): React.ReactElement {
           tag,
           chunks: tagChunks,
           approvedCount: tagChunks.filter((c) => c.approved).length,
-          summary: summaryByTagName.get(tag.name),
         });
       }
     }
     return Array.from(map.values()).sort((a, b) => b.chunks.length - a.chunks.length);
-  }, [chunks, tags, tagSummaries]);
+  }, [chunks, tags]);
 
   // Derive the active group to show in the main view header:
   // When a tag group is selected, expose it for the tag name + summary display
@@ -876,15 +846,6 @@ export function ReviewPage(): React.ReactElement {
     setSyncing(false);
   }
 
-  async function handleAnalyze(): Promise<void> {
-    setAnalyzing(true);
-    await withErrorHandling(async () => {
-      await api.analyzePr(prId);
-      reload();
-    });
-    setAnalyzing(false);
-  }
-
   async function handleDownloadPrompt(): Promise<void> {
     setDownloadingPrompt(true);
     await withErrorHandling(async () => {
@@ -956,6 +917,22 @@ export function ReviewPage(): React.ReactElement {
       await withErrorHandling(async () => {
         await api.bulkApprove(prId, tagId);
         // No reloadPr() — progress is derived from local chunks state
+      });
+    },
+    [prId, withErrorHandling],
+  );
+
+  const handleBulkUnapprove = useCallback(
+    async (tagId: number): Promise<void> => {
+      // Optimistically mark all chunks with this tag as unapproved
+      setChunks((prev) => {
+        if (!prev) return prev;
+        return prev.map((c) =>
+          c.tags.some((t) => t.id === tagId) ? { ...c, approved: false } : c,
+        );
+      });
+      await withErrorHandling(async () => {
+        await api.bulkUnapprove(prId, tagId);
       });
     },
     [prId, withErrorHandling],
@@ -1201,6 +1178,7 @@ export function ReviewPage(): React.ReactElement {
         onScrollToFile={handleScrollToFile}
         onClearFilter={handleClearFilter}
         onBulkApprove={handleBulkApprove}
+        onBulkUnapprove={handleBulkUnapprove}
       />
 
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -1214,18 +1192,14 @@ export function ReviewPage(): React.ReactElement {
           wrapLines={wrapLines}
           onToggleWrapLines={() => setWrapLines((v) => !v)}
           onSync={handleSync}
-          onAnalyze={handleAnalyze}
           onDownloadPrompt={handleDownloadPrompt}
           onImportResults={handleImportResults}
           onPublishAll={handlePublishAll}
           onSubmitReview={() => setReviewDialogOpen(true)}
           syncing={syncing}
-          analyzing={analyzing}
           downloadingPrompt={downloadingPrompt}
           importing={importing}
           unpublishedCount={unpublishedCount}
-          llmAvailable={modelInfo != null}
-          modelLabel={modelLabel}
           additions={prWithLocalProgress.additions}
           deletions={prWithLocalProgress.deletions}
         />
@@ -1259,14 +1233,6 @@ export function ReviewPage(): React.ReactElement {
                       <p className="text-xs text-fg-muted mb-1 ml-[18px]">
                         {activeGroup.tag.description}
                       </p>
-                    )}
-                    {activeGroup.summary && (
-                      <div className="rounded-lg border border-border-secondary bg-surface-secondary px-4 py-2">
-                        <Markdown
-                          text={activeGroup.summary}
-                          className="text-xs text-fg-secondary"
-                        />
-                      </div>
                     )}
                   </div>
                 ) : undefined
