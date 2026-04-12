@@ -453,7 +453,7 @@ const Sidebar = memo(function Sidebar({
                       title="Unapprove all chunks in this group"
                     >
                       <span className="group-hover/done:hidden">✓ Done</span>
-                      <span className="hidden group-hover/done:inline">✕ Unapprove</span>
+                      <span className="hidden group-hover/done:inline">↩ Undo</span>
                     </button>
                   ) : (
                     <button
