@@ -28,7 +28,6 @@ A sample PR Review session in the app:
     - [Lint \& Format](#lint--format)
     - [Testing](#testing)
   - [Development Usage](#development-usage)
-  - [Production Deployment](#production-deployment)
   - [Key Features](#key-features)
   - [Server Configuration \& Integrations](#server-configuration--integrations)
     - [1. Point to a Repository](#1-point-to-a-repository)
@@ -125,30 +124,6 @@ npm run test:ui        # Interactive mode (Vitest UI)
 - *Shared*: Common types/modules reused on client and server
 
 All apps follow strict TypeScript, formatting and style guidelines (see [AGENTS.md](./AGENTS.md) for further details).
-
-## Production Deployment
-
-The server has no native dependencies — only pure JavaScript packages — so it runs on any platform with Node.js >=24.9.0 without build tools.
-
-```bash
-# Install production dependencies only (skips test/dev tooling)
-npm install --omit=dev
-
-# Build all packages
-npm run build
-
-# Start the server
-REPO_PATH=/path/to/your/repo node packages/server/dist/index.js
-```
-
-The production dependency footprint for the server is minimal:
-
-| Package | Purpose |
-|---|---|
-| `express` | HTTP server |
-| `@octokit/rest` | GitHub API client |
-| `@pr-review/shared` | Shared types (workspace package) |
-| *(built-in)* `node:sqlite` | SQLite database via `DatabaseSync` |
 
 ## Key Features
 
