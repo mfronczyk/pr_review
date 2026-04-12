@@ -9,7 +9,6 @@ import type {
   Comment,
   ImportAnalysisRequest,
   LlmAnalysisResult,
-  LlmModelInfo,
   PrWithProgress,
   PromptDownloadResponse,
   PullRequest,
@@ -75,10 +74,6 @@ export function syncPr(id: number): Promise<SyncResult> {
   return request(`/api/prs/${id}/sync`, { method: 'POST' });
 }
 
-export function analyzePr(id: number): Promise<LlmAnalysisResult> {
-  return request(`/api/prs/${id}/analyze`, { method: 'POST' });
-}
-
 export function getPrompt(prId: number): Promise<PromptDownloadResponse> {
   return request(`/api/prs/${prId}/prompt`);
 }
@@ -106,12 +101,6 @@ export function submitReview(
     method: 'POST',
     body: JSON.stringify({ event, body: body || undefined }),
   });
-}
-
-// ── LLM ─────────────────────────────────────────────────────
-
-export function getModelInfo(): Promise<LlmModelInfo> {
-  return request('/api/llm/model');
 }
 
 // ── Chunks ──────────────────────────────────────────────────

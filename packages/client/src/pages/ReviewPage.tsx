@@ -523,18 +523,14 @@ function Toolbar({
   wrapLines,
   onToggleWrapLines,
   onSync,
-  onAnalyze,
   onDownloadPrompt,
   onImportResults,
   onPublishAll,
   onSubmitReview,
   syncing,
-  analyzing,
   downloadingPrompt,
   importing,
   unpublishedCount,
-  llmAvailable,
-  modelLabel,
   additions,
   deletions,
 }: {
@@ -545,18 +541,14 @@ function Toolbar({
   wrapLines: boolean;
   onToggleWrapLines: () => void;
   onSync: () => void;
-  onAnalyze: () => void;
   onDownloadPrompt: () => void;
   onImportResults: (file: File) => void;
   onPublishAll: () => Promise<void>;
   onSubmitReview: () => void;
   syncing: boolean;
-  analyzing: boolean;
   downloadingPrompt: boolean;
   importing: boolean;
   unpublishedCount: number;
-  llmAvailable: boolean;
-  modelLabel: string | null;
   additions: number;
   deletions: number;
 }): React.ReactElement {
@@ -647,16 +639,6 @@ function Toolbar({
         >
           {syncing ? 'Fetching...' : 'Fetch Latest'}
         </button>
-        {llmAvailable && (
-          <button
-            type="button"
-            onClick={onAnalyze}
-            disabled={analyzing}
-            className="rounded-md bg-purple-600 px-3 py-1 text-xs text-white hover:bg-purple-500 disabled:opacity-50 dark:bg-purple-700 dark:hover:bg-purple-600"
-          >
-            {analyzing ? 'Analyzing...' : `Analyze with LLM${modelLabel ? ` (${modelLabel})` : ''}`}
-          </button>
-        )}
         <span className="mx-1 h-4 w-px bg-border-primary" />
         <button
           type="button"
@@ -704,7 +686,6 @@ export function ReviewPage(): React.ReactElement {
   const [showUnresolved, setShowUnresolved] = useState(false);
   const [wrapLines, setWrapLines] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
   const [downloadingPrompt, setDownloadingPrompt] = useState(false);
   const [importing, setImporting] = useState(false);
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
@@ -742,13 +723,6 @@ export function ReviewPage(): React.ReactElement {
     () => api.getTagSummaries(prId),
     [prId],
   );
-
-  const { data: modelInfo } = useAsync(() => api.getModelInfo(), []);
-
-  const modelLabel = useMemo((): string | null => {
-    if (!modelInfo) return null;
-    return `${modelInfo.provider}/${modelInfo.model}`;
-  }, [modelInfo]);
 
   const reload = useCallback(() => {
     reloadPr();
@@ -874,15 +848,6 @@ export function ReviewPage(): React.ReactElement {
       reload();
     });
     setSyncing(false);
-  }
-
-  async function handleAnalyze(): Promise<void> {
-    setAnalyzing(true);
-    await withErrorHandling(async () => {
-      await api.analyzePr(prId);
-      reload();
-    });
-    setAnalyzing(false);
   }
 
   async function handleDownloadPrompt(): Promise<void> {
@@ -1214,18 +1179,14 @@ export function ReviewPage(): React.ReactElement {
           wrapLines={wrapLines}
           onToggleWrapLines={() => setWrapLines((v) => !v)}
           onSync={handleSync}
-          onAnalyze={handleAnalyze}
           onDownloadPrompt={handleDownloadPrompt}
           onImportResults={handleImportResults}
           onPublishAll={handlePublishAll}
           onSubmitReview={() => setReviewDialogOpen(true)}
           syncing={syncing}
-          analyzing={analyzing}
           downloadingPrompt={downloadingPrompt}
           importing={importing}
           unpublishedCount={unpublishedCount}
-          llmAvailable={modelInfo != null}
-          modelLabel={modelLabel}
           additions={prWithLocalProgress.additions}
           deletions={prWithLocalProgress.deletions}
         />

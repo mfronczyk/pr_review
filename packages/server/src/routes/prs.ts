@@ -1,7 +1,6 @@
 import type {
   AddPrRequest,
   ImportAnalysisRequest,
-  LlmModelInfo,
   PrWithProgress,
   PromptDownloadResponse,
   ReviewEvent,
@@ -14,18 +13,13 @@ import { ChunkService } from '../services/chunk-service.js';
 import { parseDiff } from '../services/diff-parser.js';
 import { GitService } from '../services/git.js';
 import {
-  analyzePr,
   buildExportablePrompt,
   mapTaggingResult,
   storeChunkMetadata,
 } from '../services/llm-analyzer.js';
 import { PrService } from '../services/pr-service.js';
 
-export function createPrRoutes(
-  db: Database.Database,
-  repoPath: string,
-  modelInfo?: LlmModelInfo,
-): Router {
+export function createPrRoutes(db: Database.Database, repoPath: string): Router {
   const router = Router();
   const prService = new PrService({ db, repoPath });
   const chunkService = new ChunkService({ db });
@@ -134,59 +128,6 @@ export function createPrRoutes(
       console.error(
         `[prs] Failed to sync PR #${prId}: ${error instanceof Error ? error.message : String(error)}`,
       );
-      res.status(500).json({ error: errorMessage(error) });
-    }
-  });
-
-  /**
-   * POST /api/prs/:id/analyze
-   * Run LLM analysis on a PR's chunks.
-   */
-  router.post('/:id/analyze', async (req, res) => {
-    try {
-      if (!modelInfo) {
-        res.status(503).json({
-          error:
-            'LLM analysis is not available. Start the server with LLM_MODEL=provider/model to enable it.',
-        });
-        return;
-      }
-
-      const prId = Number(req.params.id);
-      const pr = prService.getPr(prId);
-      if (!pr) {
-        res.status(404).json({ error: 'PR not found' });
-        return;
-      }
-
-      // Get the diff using the stored head SHA
-      const git = new GitService({ repoPath });
-      const baseRef = `origin/${pr.baseRef}`;
-
-      // Ensure the commit is available locally
-      await git.ensureShaFetched(pr.headSha);
-
-      const rawDiff = await git.diff(baseRef, pr.headSha);
-      const fileDiffs = parseDiff(rawDiff);
-
-      // Get commit messages for additional context
-      const commitMessages = await git.getCommitLog(baseRef, pr.headSha);
-
-      const result = await analyzePr(
-        { db, repoPath },
-        prId,
-        pr.title,
-        pr.body,
-        pr.author,
-        pr.baseRef,
-        pr.headRef,
-        commitMessages,
-        fileDiffs,
-        modelInfo,
-      );
-
-      res.json(result);
-    } catch (error) {
       res.status(500).json({ error: errorMessage(error) });
     }
   });

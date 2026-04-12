@@ -103,26 +103,7 @@ export interface CommentThread {
   replies: Comment[];
 }
 
-// ── LLM Model Info ──────────────────────────────────────────
-
-export interface LlmModelInfo {
-  provider: string;
-  model: string;
-}
-
-// ── LLM Run ─────────────────────────────────────────────────
-
-export type LlmRunStatus = 'running' | 'completed' | 'failed';
-
-export interface LlmRun {
-  id: number;
-  prId: number;
-  startedAt: string;
-  finishedAt: string | null;
-  status: LlmRunStatus;
-}
-
-// ── LLM Analysis Output ────────────────────────────────────
+// ── Tag Summary ────────────────────────────────────────────
 
 export interface LlmTagDefinition {
   name: string;
