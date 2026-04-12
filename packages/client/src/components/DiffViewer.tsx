@@ -965,12 +965,16 @@ export const DiffViewer = memo(function DiffViewer({
   const stickyRef = useRef<HTMLDivElement>(null);
   const [stickyFile, setStickyFile] = useState<FileGroup | null>(null);
   const [stickyOffset, setStickyOffset] = useState(0); // negative translateY when being pushed
+  const [scrollbarWidth, setScrollbarWidth] = useState(0);
 
   useEffect(() => {
     const scrollEl = parentRef.current;
     if (!scrollEl) return;
 
     function handleScroll(): void {
+      // Measure scrollbar width so the sticky overlay matches the content area.
+      setScrollbarWidth(scrollEl!.offsetWidth - scrollEl!.clientWidth);
+
       const items = virtualizer.getVirtualItems();
       if (items.length === 0) {
         setStickyFile(null);
@@ -1045,9 +1049,10 @@ export const DiffViewer = memo(function DiffViewer({
           next file's inline header approaches. */}
       {stickyFile && (
         <div
-          className="absolute right-0 left-0 z-30 px-4 pointer-events-none"
+          className="absolute left-0 z-30 px-4 pointer-events-none"
           style={{
             top: '-10px',
+            right: `${scrollbarWidth}px`,
             transform: stickyOffset < 0 ? `translateY(${stickyOffset}px)` : undefined,
           }}
         >
