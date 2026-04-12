@@ -217,6 +217,47 @@ describe('ChunkService', () => {
     });
   });
 
+  describe('getDiffStats', () => {
+    it('should count additions and deletions from chunk diff text', () => {
+      const stats = service.getDiffStats(prId);
+      // From beforeEach: '+import typing' (1 add), '-old\n+new' (1 del + 1 add), '+class Model:' (1 add)
+      expect(stats.additions).toBe(3);
+      expect(stats.deletions).toBe(1);
+    });
+
+    it('should count lines starting with +++ as additions (not skip them as headers)', () => {
+      // Simulate a test file that contains an embedded diff with a +++ b/... header.
+      // When that file is added, the diff line looks like: ++++ b/src/utils.py
+      // The first + means "added line", the remaining +++ b/... is the content.
+      db.prepare(
+        `INSERT INTO chunks (pr_id, file_path, chunk_index, content_hash, diff_text, start_line, end_line)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        prId,
+        'src/test-file.ts',
+        0,
+        'hash_triple_plus',
+        '@@ -0,0 +1,5 @@\n+const diff = `\n++++ b/src/utils.py\n+@@ -1,3 +1,4 @@\n+ context\n+`;',
+        1,
+        5,
+      );
+
+      const stats = service.getDiffStats(prId);
+      // 3 from beforeEach + 5 new additions (all 5 non-header lines start with +)
+      expect(stats.additions).toBe(8);
+    });
+
+    it('should return zeros for a PR with no chunks', () => {
+      db.prepare(
+        "INSERT INTO prs (owner, repo, number, gh_host) VALUES ('org', 'repo', 9999, 'github.com')",
+      ).run();
+      const otherPr = db.prepare('SELECT id FROM prs WHERE number = 9999').get() as { id: number };
+      const stats = service.getDiffStats(otherPr.id);
+      expect(stats.additions).toBe(0);
+      expect(stats.deletions).toBe(0);
+    });
+  });
+
   describe('metadata', () => {
     it('should create metadata for a chunk', () => {
       const chunks = service.getChunksForPr(prId);

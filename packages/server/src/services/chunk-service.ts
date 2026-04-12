@@ -197,6 +197,11 @@ export class ChunkService {
 
   /**
    * Get total additions and deletions for a PR by scanning chunk diff text.
+   *
+   * Chunk diffText only contains hunk content (the `@@` header + diff lines).
+   * The `+++ b/...` and `--- a/...` file-level headers are never stored,
+   * so every line starting with `+` is a genuine addition and every line
+   * starting with `-` is a genuine deletion — no need to exclude `+++`/`---`.
    */
   getDiffStats(prId: number): { additions: number; deletions: number } {
     const rows = this.db
@@ -207,9 +212,9 @@ export class ChunkService {
     let deletions = 0;
     for (const row of rows) {
       for (const line of row.diff_text.split('\n')) {
-        if (line.startsWith('+') && !line.startsWith('+++')) {
+        if (line.startsWith('+')) {
           additions++;
-        } else if (line.startsWith('-') && !line.startsWith('---')) {
+        } else if (line.startsWith('-')) {
           deletions++;
         }
       }
