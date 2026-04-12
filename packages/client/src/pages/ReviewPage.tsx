@@ -8,7 +8,6 @@ import { Link, useParams } from 'react-router-dom';
 
 import * as api from '@/api';
 import { DiffViewer } from '@/components/DiffViewer';
-import { Markdown } from '@/components/Markdown';
 import { SubmitReviewDialog } from '@/components/SubmitReviewDialog';
 import { formatRelativeTime } from '@/format-time';
 import { useAsync } from '@/hooks/use-async';
@@ -27,7 +26,6 @@ interface GroupInfo {
   tag: Tag;
   chunks: ChunkWithDetails[];
   approvedCount: number;
-  summary?: string;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -719,17 +717,11 @@ export function ReviewPage(): React.ReactElement {
 
   const { data: tags, reload: reloadTags } = useAsync(() => api.getTags(prId), [prId]);
 
-  const { data: tagSummaries, reload: reloadTagSummaries } = useAsync(
-    () => api.getTagSummaries(prId),
-    [prId],
-  );
-
   const reload = useCallback(() => {
     reloadPr();
     reloadChunks();
     reloadTags();
-    reloadTagSummaries();
-  }, [reloadPr, reloadChunks, reloadTags, reloadTagSummaries]);
+  }, [reloadPr, reloadChunks, reloadTags]);
 
   /** Wraps an async action with error handling. */
   const withErrorHandling = useCallback(async (fn: () => Promise<void>): Promise<void> => {
@@ -744,13 +736,6 @@ export function ReviewPage(): React.ReactElement {
   // Build groups from tag assignments
   const groups = useMemo((): GroupInfo[] => {
     if (!chunks || !tags) return [];
-    // Build a lookup from tag name to summary
-    const summaryByTagName = new Map<string, string>();
-    if (tagSummaries) {
-      for (const ts of tagSummaries) {
-        summaryByTagName.set(ts.tagName, ts.summary);
-      }
-    }
     const map = new Map<number, GroupInfo>();
     for (const tag of tags) {
       const tagChunks = chunks.filter((c) => c.tags.some((t) => t.id === tag.id));
@@ -759,12 +744,11 @@ export function ReviewPage(): React.ReactElement {
           tag,
           chunks: tagChunks,
           approvedCount: tagChunks.filter((c) => c.approved).length,
-          summary: summaryByTagName.get(tag.name),
         });
       }
     }
     return Array.from(map.values()).sort((a, b) => b.chunks.length - a.chunks.length);
-  }, [chunks, tags, tagSummaries]);
+  }, [chunks, tags]);
 
   // Derive the active group to show in the main view header:
   // When a tag group is selected, expose it for the tag name + summary display
@@ -1220,14 +1204,6 @@ export function ReviewPage(): React.ReactElement {
                       <p className="text-xs text-fg-muted mb-1 ml-[18px]">
                         {activeGroup.tag.description}
                       </p>
-                    )}
-                    {activeGroup.summary && (
-                      <div className="rounded-lg border border-border-secondary bg-surface-secondary px-4 py-2">
-                        <Markdown
-                          text={activeGroup.summary}
-                          className="text-xs text-fg-secondary"
-                        />
-                      </div>
                     )}
                   </div>
                 ) : undefined

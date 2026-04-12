@@ -103,7 +103,7 @@ export interface CommentThread {
   replies: Comment[];
 }
 
-// ── Tag Summary ────────────────────────────────────────────
+// ── LLM Analysis ───────────────────────────────────────────
 
 export interface LlmTagDefinition {
   name: string;
@@ -121,12 +121,6 @@ export interface LlmChunkAssignment {
 export interface LlmAnalysisResult {
   tags: LlmTagDefinition[];
   chunkAssignments: LlmChunkAssignment[];
-  tagSummaries: LlmTagSummary[];
-}
-
-export interface LlmTagSummary {
-  tag: string;
-  summary: string;
 }
 
 // ── API Request/Response Types ──────────────────────────────
@@ -204,12 +198,4 @@ export interface ImportAnalysisRequest {
 export interface PromptDownloadResponse {
   prompt: string;
   filename: string;
-}
-
-// ── Tag Summary ────────────────────────────────────────────
-
-export interface TagSummary {
-  tagId: number;
-  tagName: string;
-  summary: string;
 }

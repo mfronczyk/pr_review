@@ -8,7 +8,6 @@ import type {
   ChunkWithDetails,
   Comment,
   ImportAnalysisRequest,
-  LlmAnalysisResult,
   PrWithProgress,
   PromptDownloadResponse,
   PullRequest,
@@ -17,7 +16,6 @@ import type {
   SubmitReviewResponse,
   SyncResult,
   Tag,
-  TagSummary,
 } from '@pr-review/shared';
 
 class ApiError extends Error {
@@ -78,18 +76,11 @@ export function getPrompt(prId: number): Promise<PromptDownloadResponse> {
   return request(`/api/prs/${prId}/prompt`);
 }
 
-export function importAnalysis(
-  prId: number,
-  data: ImportAnalysisRequest,
-): Promise<LlmAnalysisResult> {
+export function importAnalysis(prId: number, data: ImportAnalysisRequest): Promise<void> {
   return request(`/api/prs/${prId}/import-analysis`, {
     method: 'POST',
     body: JSON.stringify(data),
   });
-}
-
-export function getTagSummaries(prId: number): Promise<TagSummary[]> {
-  return request(`/api/prs/${prId}/tag-summaries`);
 }
 
 export function submitReview(

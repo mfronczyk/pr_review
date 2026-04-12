@@ -122,15 +122,6 @@ function createTables(db: Database.Database): void {
       status        TEXT NOT NULL DEFAULT 'running'
     );
 
-    CREATE TABLE IF NOT EXISTS tag_summaries (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      pr_id         INTEGER NOT NULL REFERENCES prs(id) ON DELETE CASCADE,
-      tag_id        INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-      summary       TEXT NOT NULL,
-      llm_run_id    INTEGER REFERENCES llm_runs(id) ON DELETE SET NULL,
-      UNIQUE(pr_id, tag_id)
-    );
-
     CREATE INDEX IF NOT EXISTS idx_chunks_pr_id ON chunks(pr_id);
     CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash);
     CREATE INDEX IF NOT EXISTS idx_chunk_tags_pr_hash ON chunk_tags(pr_id, content_hash);
@@ -140,7 +131,6 @@ function createTables(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_comments_pr_id ON comments(pr_id);
     CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON comments(parent_id);
     CREATE INDEX IF NOT EXISTS idx_llm_runs_pr_id ON llm_runs(pr_id);
-    CREATE INDEX IF NOT EXISTS idx_tag_summaries_pr_id ON tag_summaries(pr_id);
   `);
 }
 
@@ -177,5 +167,13 @@ function runMigrations(db: Database.Database): void {
   if (!chunkCols.some((c) => c.name === 'old_start_line')) {
     db.exec('ALTER TABLE chunks ADD COLUMN old_start_line INTEGER NOT NULL DEFAULT 0');
     db.exec('ALTER TABLE chunks ADD COLUMN old_end_line INTEGER NOT NULL DEFAULT 0');
+  }
+
+  // Migration: drop tag_summaries table (no longer used after OpenCode removal)
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{
+    name: string;
+  }>;
+  if (tables.some((t) => t.name === 'tag_summaries')) {
+    db.exec('DROP TABLE tag_summaries');
   }
 }
