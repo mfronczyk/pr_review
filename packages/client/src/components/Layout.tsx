@@ -58,7 +58,7 @@ function ThemeToggle(): React.ReactElement {
 
 export function Layout(): React.ReactElement {
   return (
-    <div className="flex min-h-screen flex-col bg-surface-page text-fg-primary">
+    <div className="flex h-screen flex-col overflow-hidden bg-surface-page text-fg-primary">
       <header className="border-b border-border-primary bg-surface-primary">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
           <Link to="/" className="text-lg font-semibold text-fg-primary hover:text-blue-500">
@@ -72,7 +72,7 @@ export function Layout(): React.ReactElement {
           </nav>
         </div>
       </header>
-      <main className="flex-1">
+      <main className="flex-1 overflow-hidden">
         <Outlet />
       </main>
     </div>

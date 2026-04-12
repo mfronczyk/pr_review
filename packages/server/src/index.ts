@@ -10,7 +10,7 @@ import { createCommentRoutes } from './routes/comments.js';
 import { createPrRoutes } from './routes/prs.js';
 
 const PORT = Number.parseInt(process.env.PORT ?? '3420', 10);
-const REPO_PATH = process.env.REPO_PATH ?? process.cwd();
+const REPO_PATH = (process.env.REPO_PATH ?? process.cwd()).trim();
 
 /**
  * Create and configure the Express app.
