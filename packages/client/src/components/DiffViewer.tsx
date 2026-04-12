@@ -3,14 +3,16 @@
  * Each file is a rounded container with a sticky header and all its chunks inside.
  * Uses @tanstack/react-virtual for efficient rendering of large PRs.
  *
- * Comments are anchored to specific new-file lines within chunks and rendered
- * inline as threads (root + flat replies).
+ * Comments are anchored to specific lines within chunks (LEFT for deleted lines,
+ * RIGHT for added/context lines) and rendered inline as threads (root + flat replies).
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { getContextLines } from '@/api';
 import { InlineThread, NewCommentForm } from '@/components/InlineComment';
+import { Markdown } from '@/components/Markdown';
 import { highlightLines } from '@/highlight';
 import type { ChunkWithDetails, Comment, CommentThread } from '@pr-review/shared';
 
@@ -20,10 +22,19 @@ interface DiffViewerProps {
   chunks: ChunkWithDetails[];
   departingChunkIds: ReadonlySet<number>;
   scrollToFile: string | null;
+  /** When true, long lines wrap instead of being clipped. */
+  wrapLines?: boolean;
+  /** Optional content rendered at the top of the scroll area (scrolls away with the diff). */
+  headerContent?: React.ReactNode;
   onToggleApproved: (chunkId: number) => void;
   onChunkDeparted: (chunkId: number) => void;
   onScrollToFileDone: () => void;
-  onAddComment: (chunkId: number, body: string, line: number) => Promise<void>;
+  onAddComment: (
+    chunkId: number,
+    body: string,
+    line: number,
+    side: 'LEFT' | 'RIGHT',
+  ) => Promise<void>;
   onReplyComment: (chunkId: number, parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
@@ -42,10 +53,10 @@ interface FileGroup {
 // ── Helpers ─────────────────────────────────────────────────
 
 /**
- * Group a flat Comment[] into threads keyed by new-file line number.
- * Returns a Map from line number to CommentThread[].
+ * Group a flat Comment[] into threads keyed by "line:side" (e.g. "42:RIGHT").
+ * Returns a Map from the composite key to CommentThread[].
  */
-function groupCommentsIntoThreads(comments: Comment[]): Map<number, CommentThread[]> {
+function groupCommentsIntoThreads(comments: Comment[]): Map<string, CommentThread[]> {
   const roots = comments.filter((c) => c.parentId == null);
   const repliesByParent = new Map<number, Comment[]>();
   for (const c of comments) {
@@ -59,35 +70,19 @@ function groupCommentsIntoThreads(comments: Comment[]): Map<number, CommentThrea
     }
   }
 
-  const byLine = new Map<number, CommentThread[]>();
+  const byKey = new Map<string, CommentThread[]>();
   for (const root of roots) {
     const replies = repliesByParent.get(root.id) ?? [];
     const thread: CommentThread = { root, replies };
-    const existing = byLine.get(root.line);
+    const key = `${root.line}:${root.side}`;
+    const existing = byKey.get(key);
     if (existing) {
       existing.push(thread);
     } else {
-      byLine.set(root.line, [thread]);
+      byKey.set(key, [thread]);
     }
   }
-  return byLine;
-}
-
-// ── Tag Pill ────────────────────────────────────────────────
-
-function TagPill({ name, color }: { name: string; color: string }): React.ReactElement {
-  return (
-    <span
-      className="inline-block rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-      style={{
-        backgroundColor: `${color}22`,
-        color: color || '#9ca3af',
-        border: `1px solid ${color}44`,
-      }}
-    >
-      {name}
-    </span>
-  );
+  return byKey;
 }
 
 // ── Priority Badge ──────────────────────────────────────────
@@ -118,10 +113,12 @@ function ChunkHeader({
   chunk,
   onToggle,
   isLast,
+  isFooter = false,
 }: {
   chunk: ChunkWithDetails;
   onToggle: () => void;
   isLast: boolean;
+  isFooter?: boolean;
 }): React.ReactElement {
   const commentCount = chunk.comments.length;
   return (
@@ -147,11 +144,9 @@ function ChunkHeader({
         L{chunk.startLine}–{chunk.endLine}
       </span>
 
-      {chunk.tags.map((t) => (
-        <TagPill key={t.id} name={t.name} color={t.color} />
-      ))}
-
-      {chunk.metadata?.priority && <PriorityBadge priority={chunk.metadata.priority} />}
+      {!isFooter && chunk.metadata?.priority && (
+        <PriorityBadge priority={chunk.metadata.priority} />
+      )}
 
       {commentCount > 0 && (
         <span className="text-xs text-fg-muted">
@@ -168,10 +163,58 @@ function ChunkHeader({
 
 function ReviewNote({ note }: { note: string }): React.ReactElement {
   return (
-    <div className="border-t border-border-secondary bg-diff-note-bg px-3 py-1 text-xs text-diff-note-fg">
-      <span className="mr-1">⚡</span>
-      {note}
+    <div className="border-t border-border-secondary px-3 py-1">
+      <div className="max-w-3xl rounded bg-diff-note-bg px-2 py-0.5 text-xs text-diff-note-fg">
+        <span className="mr-1">⚡</span>
+        <Markdown text={note} compact className="inline" />
+      </div>
     </div>
+  );
+}
+
+// ── Expand Context ──────────────────────────────────────────
+
+/** Tracks expanded context state for a single chunk. */
+interface ExpandedContext {
+  above: ParsedDiffLine[];
+  below: ParsedDiffLine[];
+  /** The lowest new-side line number loaded above the chunk. */
+  topLine: number;
+  /** The highest new-side line number loaded below the chunk. */
+  bottomLine: number;
+  topExhausted: boolean;
+  bottomExhausted: boolean;
+  loadingAbove: boolean;
+  loadingBelow: boolean;
+}
+
+const EXPAND_LINES = 20;
+
+function ExpandButton({
+  direction,
+  loading,
+  onClick,
+}: {
+  direction: 'above' | 'below';
+  loading: boolean;
+  onClick: () => void;
+}): React.ReactElement {
+  const arrow = direction === 'above' ? '\u2191' : '\u2193';
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={loading}
+      className="flex w-full items-center justify-center gap-1 border-t border-border-secondary bg-diff-info-bg/20 py-0.5 text-xs text-diff-info-fg hover:bg-diff-info-bg/40 disabled:opacity-50"
+    >
+      {loading ? (
+        'Loading...'
+      ) : (
+        <>
+          {arrow} Show {EXPAND_LINES} more lines
+        </>
+      )}
+    </button>
   );
 }
 
@@ -304,15 +347,18 @@ const gutterStyles: Record<ParsedDiffLine['type'], string> = {
 function DiffLine({
   parsed,
   highlightedHtml,
+  wrapLines,
   onClickAdd,
 }: {
   parsed: ParsedDiffLine;
   highlightedHtml: string | null;
+  wrapLines?: boolean;
   onClickAdd?: () => void;
 }): React.ReactElement {
   const { bg, text } = lineStyles[parsed.type];
   const gutter = gutterStyles[parsed.type];
   const canComment = parsed.type !== 'hunk-header';
+  const ws = wrapLines ? 'whitespace-pre-wrap break-words' : 'whitespace-pre';
 
   return (
     <div className={`group/line relative flex ${bg}`}>
@@ -348,12 +394,12 @@ function DiffLine({
       {/* Code content */}
       {highlightedHtml != null ? (
         <code
-          className={`hljs flex-1 whitespace-pre pr-3 text-xs leading-5 ${parsed.type === 'hunk-header' ? text : ''}`}
+          className={`hljs min-w-0 flex-1 ${ws} pr-3 text-xs leading-5 ${parsed.type === 'hunk-header' ? text : ''}`}
           // biome-ignore lint/security/noDangerouslySetInnerHtml: highlight.js output is trusted
           dangerouslySetInnerHTML={{ __html: highlightedHtml || '&nbsp;' }}
         />
       ) : (
-        <code className={`flex-1 whitespace-pre pr-3 text-xs leading-5 ${text}`}>
+        <code className={`min-w-0 flex-1 ${ws} pr-3 text-xs leading-5 ${text}`}>
           {parsed.content || ' '}
         </code>
       )}
@@ -363,8 +409,34 @@ function DiffLine({
 
 // ── Chunk Block ─────────────────────────────────────────────
 
+/**
+ * Extract the first new-side line number from parsed diff lines.
+ * This is the line number at the top of the hunk, used to determine
+ * how far above the chunk we can expand.
+ */
+function getFirstNewLineNum(parsedLines: ParsedDiffLine[]): number {
+  for (const line of parsedLines) {
+    if (line.newLineNum != null) return line.newLineNum;
+  }
+  return 1;
+}
+
+/**
+ * Extract the last new-side line number from parsed diff lines.
+ * This is the line number at the bottom of the hunk, used to determine
+ * where to start expanding below.
+ */
+function getLastNewLineNum(parsedLines: ParsedDiffLine[]): number {
+  for (let i = parsedLines.length - 1; i >= 0; i--) {
+    const num = parsedLines[i].newLineNum;
+    if (num != null) return num;
+  }
+  return 1;
+}
+
 function ChunkBlock({
   chunk,
+  wrapLines,
   onToggleApproved,
   onAddComment,
   onReplyComment,
@@ -376,8 +448,9 @@ function ChunkBlock({
   isLast,
 }: {
   chunk: ChunkWithDetails;
+  wrapLines?: boolean;
   onToggleApproved: () => void;
-  onAddComment: (body: string, line: number) => Promise<void>;
+  onAddComment: (body: string, line: number, side: 'LEFT' | 'RIGHT') => Promise<void>;
   onReplyComment: (parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
@@ -388,14 +461,110 @@ function ChunkBlock({
 }): React.ReactElement {
   const parsedLines = useMemo(() => parseDiffLines(chunk.diffText), [chunk.diffText]);
 
+  // ── Expanded context state ──────────────────────────────
+  const [expanded, setExpanded] = useState<ExpandedContext>(() => {
+    const firstLine = getFirstNewLineNum(parsedLines);
+    const lastLine = getLastNewLineNum(parsedLines);
+    return {
+      above: [],
+      below: [],
+      topLine: firstLine,
+      bottomLine: lastLine,
+      topExhausted: firstLine <= 1,
+      bottomExhausted: false,
+      loadingAbove: false,
+      loadingBelow: false,
+    };
+  });
+
+  // Reset expanded context when the chunk's diff text changes
+  useEffect(() => {
+    const firstLine = getFirstNewLineNum(parsedLines);
+    const lastLine = getLastNewLineNum(parsedLines);
+    setExpanded({
+      above: [],
+      below: [],
+      topLine: firstLine,
+      bottomLine: lastLine,
+      topExhausted: firstLine <= 1,
+      bottomExhausted: false,
+      loadingAbove: false,
+      loadingBelow: false,
+    });
+  }, [parsedLines]);
+
+  const handleExpandAbove = useCallback(async () => {
+    setExpanded((prev) => ({ ...prev, loadingAbove: true }));
+    try {
+      const endLine = expanded.topLine - 1;
+      const startLine = Math.max(1, endLine - EXPAND_LINES + 1);
+      if (endLine < 1) {
+        setExpanded((prev) => ({ ...prev, topExhausted: true, loadingAbove: false }));
+        return;
+      }
+      const { lines } = await getContextLines(chunk.prId, chunk.filePath, startLine, endLine);
+      const newLines: ParsedDiffLine[] = lines.map((l) => ({
+        type: 'context' as const,
+        content: l.content,
+        prefix: ' ',
+        oldLineNum: l.lineNumber,
+        newLineNum: l.lineNumber,
+      }));
+      setExpanded((prev) => ({
+        ...prev,
+        above: [...newLines, ...prev.above],
+        topLine: startLine,
+        topExhausted: startLine <= 1,
+        loadingAbove: false,
+      }));
+    } catch {
+      setExpanded((prev) => ({ ...prev, loadingAbove: false }));
+    }
+  }, [expanded.topLine, chunk.prId, chunk.filePath]);
+
+  const handleExpandBelow = useCallback(async () => {
+    setExpanded((prev) => ({ ...prev, loadingBelow: true }));
+    try {
+      const startLine = expanded.bottomLine + 1;
+      const endLine = startLine + EXPAND_LINES - 1;
+      const { lines } = await getContextLines(chunk.prId, chunk.filePath, startLine, endLine);
+      if (lines.length === 0) {
+        setExpanded((prev) => ({ ...prev, bottomExhausted: true, loadingBelow: false }));
+        return;
+      }
+      const newLines: ParsedDiffLine[] = lines.map((l) => ({
+        type: 'context' as const,
+        content: l.content,
+        prefix: ' ',
+        oldLineNum: l.lineNumber,
+        newLineNum: l.lineNumber,
+      }));
+      setExpanded((prev) => ({
+        ...prev,
+        below: [...prev.below, ...newLines],
+        bottomLine: lines[lines.length - 1].lineNumber,
+        bottomExhausted: lines.length < EXPAND_LINES,
+        loadingBelow: false,
+      }));
+    } catch {
+      setExpanded((prev) => ({ ...prev, loadingBelow: false }));
+    }
+  }, [expanded.bottomLine, chunk.prId, chunk.filePath]);
+
+  // ── Combined lines for rendering and highlighting ───────
+  const allLines = useMemo(
+    () => [...expanded.above, ...parsedLines, ...expanded.below],
+    [expanded.above, parsedLines, expanded.below],
+  );
+
   // Compute syntax-highlighted HTML for each line.
   // We highlight all code lines together (preserving multi-line token state)
   // and then map the results back to each parsed line.
   const highlightedHtmlLines = useMemo((): (string | null)[] => {
-    const codeLines = parsedLines.map((p) => (p.type === 'hunk-header' ? '' : p.content));
+    const codeLines = allLines.map((p) => (p.type === 'hunk-header' ? '' : p.content));
     const highlighted = highlightLines(chunk.filePath, codeLines);
-    return parsedLines.map((p, i) => (p.type === 'hunk-header' ? null : highlighted[i]));
-  }, [parsedLines, chunk.filePath]);
+    return allLines.map((p, i) => (p.type === 'hunk-header' ? null : highlighted[i]));
+  }, [allLines, chunk.filePath]);
 
   // Track which diff line index the comment form is open for (null = closed).
   // We use the array index (not line number) because multiple diff lines can
@@ -406,17 +575,24 @@ function ChunkBlock({
   const threadsByLine = useMemo(() => groupCommentsIntoThreads(chunk.comments), [chunk.comments]);
 
   /**
-   * Determine the effective line number for a diff line.
-   * For add/context lines, use newLineNum. For del lines, use the newLineNum
-   * of the next non-del line (or fallback to old line).
-   * This gives us a "right-side" anchor for comments.
+   * Determine the effective line number and diff side for a diff line.
+   * - del lines → oldLineNum on LEFT (old-file side)
+   * - add/context lines → newLineNum on RIGHT (new-file side)
    */
-  function getCommentLine(parsed: ParsedDiffLine): number {
-    // For lines with a new-file line number, use it directly
-    if (parsed.newLineNum != null) return parsed.newLineNum;
-    // For deleted lines, use the old line number as fallback
-    if (parsed.oldLineNum != null) return parsed.oldLineNum;
-    return 0;
+  function getCommentAnchor(parsed: ParsedDiffLine): {
+    line: number;
+    side: 'LEFT' | 'RIGHT';
+  } {
+    if (parsed.type === 'del' && parsed.oldLineNum != null) {
+      return { line: parsed.oldLineNum, side: 'LEFT' };
+    }
+    if (parsed.newLineNum != null) {
+      return { line: parsed.newLineNum, side: 'RIGHT' };
+    }
+    if (parsed.oldLineNum != null) {
+      return { line: parsed.oldLineNum, side: 'LEFT' };
+    }
+    return { line: 0, side: 'RIGHT' };
   }
 
   const dimClass = chunk.approved ? 'opacity-50' : '';
@@ -432,10 +608,19 @@ function ChunkBlock({
             <ReviewNote note={chunk.metadata.reviewNote} />
           </div>
         )}
+        {/* Expand above button */}
+        {!expanded.topExhausted && (
+          <ExpandButton
+            direction="above"
+            loading={expanded.loadingAbove}
+            onClick={handleExpandAbove}
+          />
+        )}
         <div className="font-mono">
-          {parsedLines.map((parsed, i) => {
-            const lineNum = getCommentLine(parsed);
-            const threadsForLine = threadsByLine.get(lineNum);
+          {allLines.map((parsed, i) => {
+            const anchor = getCommentAnchor(parsed);
+            const threadKey = `${anchor.line}:${anchor.side}`;
+            const threadsForLine = threadsByLine.get(threadKey);
             const showForm = commentFormIndex === i;
 
             return (
@@ -444,6 +629,7 @@ function ChunkBlock({
                   <DiffLine
                     parsed={parsed}
                     highlightedHtml={highlightedHtmlLines[i]}
+                    wrapLines={wrapLines}
                     onClickAdd={
                       parsed.type !== 'hunk-header' ? () => setCommentFormIndex(i) : undefined
                     }
@@ -466,7 +652,7 @@ function ChunkBlock({
                 {showForm && (
                   <NewCommentForm
                     onAdd={async (body) => {
-                      await onAddComment(body, lineNum);
+                      await onAddComment(body, anchor.line, anchor.side);
                       setCommentFormIndex(null);
                     }}
                     onCancel={() => setCommentFormIndex(null)}
@@ -476,11 +662,19 @@ function ChunkBlock({
             );
           })}
         </div>
+        {/* Expand below button */}
+        {!expanded.bottomExhausted && (
+          <ExpandButton
+            direction="below"
+            loading={expanded.loadingBelow}
+            onClick={handleExpandBelow}
+          />
+        )}
       </div>
 
       {/* Footer — mirrors ChunkHeader, dimmed when approved */}
       <div className={dimClass}>
-        <ChunkHeader chunk={chunk} onToggle={onToggleApproved} isLast={isLast} />
+        <ChunkHeader chunk={chunk} onToggle={onToggleApproved} isLast={isLast} isFooter />
       </div>
     </div>
   );
@@ -572,6 +766,7 @@ function AnimatedChunkWrapper({
 
 function FileBox({
   group,
+  wrapLines,
   departingChunkIds,
   onToggleApproved,
   onChunkDeparted,
@@ -584,10 +779,16 @@ function FileBox({
   onUnresolveThread,
 }: {
   group: FileGroup;
+  wrapLines?: boolean;
   departingChunkIds: ReadonlySet<number>;
   onToggleApproved: (chunkId: number) => void;
   onChunkDeparted: (chunkId: number) => void;
-  onAddComment: (chunkId: number, body: string, line: number) => Promise<void>;
+  onAddComment: (
+    chunkId: number,
+    body: string,
+    line: number,
+    side: 'LEFT' | 'RIGHT',
+  ) => Promise<void>;
   onReplyComment: (chunkId: number, parentId: number, body: string) => Promise<void>;
   onUpdateComment: (commentId: number, body: string) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
@@ -597,8 +798,8 @@ function FileBox({
 }): React.ReactElement {
   return (
     <div className="overflow-hidden rounded-lg border border-border-primary bg-surface-primary">
-      {/* File header — sticky within file box */}
-      <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border-primary bg-surface-secondary px-4 py-2">
+      {/* File header */}
+      <div className="flex items-center gap-2 border-b border-border-primary bg-surface-secondary px-4 pt-4 pb-2">
         <span className="font-mono text-xs text-fg-primary font-medium">{group.filePath}</span>
         <span className="text-xs text-fg-muted">
           ({group.chunks.length} chunk{group.chunks.length !== 1 ? 's' : ''})
@@ -617,8 +818,9 @@ function FileBox({
         >
           <ChunkBlock
             chunk={chunk}
+            wrapLines={wrapLines}
             onToggleApproved={() => onToggleApproved(chunk.id)}
-            onAddComment={(body, line) => onAddComment(chunk.id, body, line)}
+            onAddComment={(body, line, side) => onAddComment(chunk.id, body, line, side)}
             onReplyComment={(parentId, body) => onReplyComment(chunk.id, parentId, body)}
             onUpdateComment={onUpdateComment}
             onDeleteComment={onDeleteComment}
@@ -639,6 +841,8 @@ export const DiffViewer = memo(function DiffViewer({
   chunks,
   departingChunkIds,
   scrollToFile,
+  wrapLines,
+  headerContent,
   onToggleApproved,
   onChunkDeparted,
   onScrollToFileDone,
@@ -651,6 +855,7 @@ export const DiffViewer = memo(function DiffViewer({
   onUnresolveThread,
 }: DiffViewerProps): React.ReactElement {
   const parentRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
 
   // Group chunks by file, each group becomes one virtual row (file box)
   const fileGroups = useMemo((): FileGroup[] => {
@@ -716,54 +921,193 @@ export const DiffViewer = memo(function DiffViewer({
     overscan: 3,
   });
 
-  // Scroll to a specific file group when requested
+  // When wrapLines changes, previously-measured row heights become stale.
+  // Force the virtualizer to re-measure all items.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: wrapLines triggers remeasure even though it's not read inside the effect
+  useEffect(() => {
+    virtualizer.measure();
+  }, [wrapLines, virtualizer]);
+
+  // Scroll to top when the set of file groups changes (e.g. switching tag groups).
+  // Compare by file-path list so that approval toggles (which create new fileGroups
+  // references but keep the same files) don't trigger a scroll reset.
+  const fileGroupKey = useMemo(() => fileGroups.map((g) => g.filePath).join('\0'), [fileGroups]);
+  const prevFileGroupKeyRef = useRef(fileGroupKey);
+  useEffect(() => {
+    if (prevFileGroupKeyRef.current !== fileGroupKey) {
+      prevFileGroupKeyRef.current = fileGroupKey;
+      if (parentRef.current) {
+        parentRef.current.scrollTop = 0;
+      }
+    }
+  }, [fileGroupKey]);
+
+  // Scroll to a specific file group when requested.
+  // We manually calculate the offset to account for the header content above the virtualized area.
   useEffect(() => {
     if (!scrollToFile) return;
     const index = fileGroups.findIndex((g) => g.filePath === scrollToFile);
     if (index >= 0) {
-      virtualizer.scrollToIndex(index, { align: 'start' });
+      const result = virtualizer.getOffsetForIndex(index, 'start');
+      if (result) {
+        const headerOffset = headerRef.current?.offsetHeight ?? 0;
+        virtualizer.scrollToOffset(result[0] + headerOffset);
+      }
     }
     onScrollToFileDone();
   }, [scrollToFile, fileGroups, virtualizer, onScrollToFileDone]);
 
+  // ── Sticky file-name overlay ──────────────────────────────
+  // Tracks which file is at the top of the viewport and shows a pinned
+  // header bar (like GitHub) that sits flush with the toolbar.  When the
+  // next file's inline header approaches, the overlay slides up to make
+  // room — no abrupt pop-in/pop-out.
+  const stickyRef = useRef<HTMLDivElement>(null);
+  const [stickyFile, setStickyFile] = useState<FileGroup | null>(null);
+  const [stickyOffset, setStickyOffset] = useState(0); // negative translateY when being pushed
+
+  useEffect(() => {
+    const scrollEl = parentRef.current;
+    if (!scrollEl) return;
+
+    function handleScroll(): void {
+      const items = virtualizer.getVirtualItems();
+      if (items.length === 0) {
+        setStickyFile(null);
+        setStickyOffset(0);
+        return;
+      }
+
+      const scrollTop = scrollEl?.scrollTop ?? 0;
+      const headerHeight = headerRef.current?.offsetHeight ?? 0;
+      // Virtual item offsets are relative to the virtualizer container which
+      // starts after headerContent + the scroll container's top padding (p-4).
+      const containerOffset = headerHeight + 16; // 16px = p-4
+
+      // Total height of the sticky overlay (inner bar).
+      const overlayHeight = stickyRef.current?.offsetHeight ?? 36;
+
+      // Find the last file whose inline header's rounded top corners have
+      // scrolled past the viewport top.  The overlay appears to seamlessly
+      // cover the remaining flat portion of the inline header that is still
+      // visible.  The FileBox container uses rounded-lg (8px border-radius)
+      // plus ~1px border, so we use ~10px as the trigger threshold.
+      const cornerThreshold = 10;
+      let found: number | null = null;
+      for (const item of items) {
+        const rowTop = item.start + containerOffset;
+        if (rowTop + cornerThreshold <= scrollTop) {
+          found = item.index;
+        }
+      }
+
+      if (found !== null) {
+        const group = fileGroups[found];
+        // Where the *next* file row starts (the incoming inline header).
+        const nextStart =
+          found + 1 < fileGroups.length
+            ? (virtualizer.getOffsetForIndex(found + 1, 'start')?.[0] ?? virtualizer.getTotalSize())
+            : virtualizer.getTotalSize();
+        const nextRowTop = nextStart + containerOffset;
+
+        // Distance from the top of the viewport to the incoming header.
+        const distanceToNext = nextRowTop - scrollTop;
+
+        if (distanceToNext <= 0) {
+          // The next file's header is at or above the viewport top —
+          // the current file is fully scrolled out.
+          setStickyFile(null);
+          setStickyOffset(0);
+        } else if (distanceToNext < overlayHeight) {
+          // The incoming header is pushing the overlay upward.
+          setStickyFile(group ?? null);
+          setStickyOffset(distanceToNext - overlayHeight); // negative value
+        } else {
+          // Plenty of room — overlay sits at its natural position.
+          setStickyFile(group ?? null);
+          setStickyOffset(0);
+        }
+      } else {
+        setStickyFile(null);
+        setStickyOffset(0);
+      }
+    }
+
+    scrollEl.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll();
+    return () => scrollEl.removeEventListener('scroll', handleScroll);
+  }, [virtualizer, fileGroups]);
+
   return (
-    <div ref={parentRef} className="h-full overflow-y-auto bg-surface-page p-4">
-      <div
-        style={{
-          height: `${virtualizer.getTotalSize()}px`,
-          width: '100%',
-          position: 'relative',
-        }}
-      >
-        {virtualizer.getVirtualItems().map((virtualRow) => (
+    <div className="relative h-full overflow-hidden">
+      {/* Sticky overlay — appears when a file header touches the top edge.
+          Matches the inline file header width/style. Slides up when the
+          next file's inline header approaches. */}
+      {stickyFile && (
+        <div
+          className="absolute right-0 left-0 z-30 px-4 pointer-events-none"
+          style={{
+            top: '-10px',
+            transform: stickyOffset < 0 ? `translateY(${stickyOffset}px)` : undefined,
+          }}
+        >
           <div
-            key={virtualRow.key}
-            data-index={virtualRow.index}
-            ref={virtualizer.measureElement}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              transform: `translateY(${virtualRow.start}px)`,
-              paddingBottom: '16px', // gap between file boxes
-            }}
+            ref={stickyRef}
+            className="pointer-events-auto flex items-center gap-2 rounded-t-lg border border-border-primary bg-surface-secondary px-4 pt-4 pb-2"
           >
-            <FileBox
-              group={fileGroups[virtualRow.index]}
-              departingChunkIds={departingChunkIds}
-              onToggleApproved={onToggleApproved}
-              onChunkDeparted={onChunkDeparted}
-              onAddComment={onAddComment}
-              onReplyComment={onReplyComment}
-              onUpdateComment={onUpdateComment}
-              onDeleteComment={onDeleteComment}
-              onPublishComment={onPublishComment}
-              onResolveThread={onResolveThread}
-              onUnresolveThread={onUnresolveThread}
-            />
+            <span className="font-mono text-xs text-fg-primary font-medium">
+              {stickyFile.filePath}
+            </span>
+            <span className="text-xs text-fg-muted">
+              ({stickyFile.chunks.length} chunk{stickyFile.chunks.length !== 1 ? 's' : ''})
+            </span>
+            {stickyFile.allApproved && (
+              <span className="text-xs text-success-fg">✓ All approved</span>
+            )}
           </div>
-        ))}
+        </div>
+      )}
+
+      <div ref={parentRef} className="h-full overflow-y-auto bg-surface-page p-4">
+        {headerContent && <div ref={headerRef}>{headerContent}</div>}
+        <div
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+            width: '100%',
+            position: 'relative',
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualRow) => (
+            <div
+              key={virtualRow.key}
+              data-index={virtualRow.index}
+              ref={virtualizer.measureElement}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start}px)`,
+                paddingBottom: '16px', // gap between file boxes
+              }}
+            >
+              <FileBox
+                group={fileGroups[virtualRow.index]}
+                wrapLines={wrapLines}
+                departingChunkIds={departingChunkIds}
+                onToggleApproved={onToggleApproved}
+                onChunkDeparted={onChunkDeparted}
+                onAddComment={onAddComment}
+                onReplyComment={onReplyComment}
+                onUpdateComment={onUpdateComment}
+                onDeleteComment={onDeleteComment}
+                onPublishComment={onPublishComment}
+                onResolveThread={onResolveThread}
+                onUnresolveThread={onUnresolveThread}
+              />
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

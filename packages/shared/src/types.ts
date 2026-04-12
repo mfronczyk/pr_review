@@ -20,13 +20,17 @@ export interface PullRequest {
   headSha: string;
   body: string;
   ghHost: string;
+  commitCount: number;
   createdAt: string;
   updatedAt: string;
+  syncedAt: string;
 }
 
 export type PrState = 'open' | 'closed' | 'merged' | 'draft';
 
 // ── Chunk ───────────────────────────────────────────────────
+
+export type FileStatus = 'added' | 'modified' | 'deleted' | 'renamed';
 
 export interface Chunk {
   id: number;
@@ -37,6 +41,7 @@ export interface Chunk {
   diffText: string;
   startLine: number;
   endLine: number;
+  fileStatus: FileStatus;
   approved: boolean;
   approvedAt: string | null;
 }
@@ -47,31 +52,15 @@ export type ReviewState = 'unapproved' | 'approved' | 'outdated';
 
 export interface Tag {
   id: number;
+  prId: number;
   name: string;
   description: string;
-  color: string;
-  isDefault: boolean;
 }
 
 export interface ChunkTag {
   chunkId: number;
   tagId: number;
 }
-
-export const DEFAULT_TAG_NAMES = [
-  'bug-fix',
-  'refactor',
-  'new-feature',
-  'style/formatting',
-  'tests',
-  'docs',
-  'config',
-  'security',
-  'performance',
-  'needs-discussion',
-] as const;
-
-export type DefaultTagName = (typeof DEFAULT_TAG_NAMES)[number];
 
 // ── Chunk Metadata (LLM-assigned) ──────────────────────────
 
@@ -86,12 +75,16 @@ export interface ChunkMetadata {
 
 // ── Comment ─────────────────────────────────────────────────
 
+/** Which side of the diff the comment is anchored to. */
+export type DiffSide = 'LEFT' | 'RIGHT';
+
 export interface Comment {
   id: number;
   chunkId: number;
   prId: number;
   body: string;
   line: number;
+  side: DiffSide;
   parentId: number | null;
   author: string | null;
   ghCommentId: number | null;
@@ -127,15 +120,13 @@ export interface LlmRun {
   startedAt: string;
   finishedAt: string | null;
   status: LlmRunStatus;
-  summary: string | null;
 }
 
 // ── LLM Analysis Output ────────────────────────────────────
 
-export interface LlmSuggestedTag {
+export interface LlmTagDefinition {
   name: string;
   description: string;
-  color: string;
 }
 
 export interface LlmChunkAssignment {
@@ -147,8 +138,7 @@ export interface LlmChunkAssignment {
 }
 
 export interface LlmAnalysisResult {
-  prSummary: string;
-  suggestedTags: LlmSuggestedTag[];
+  tags: LlmTagDefinition[];
   chunkAssignments: LlmChunkAssignment[];
   tagSummaries: LlmTagSummary[];
 }
@@ -206,6 +196,33 @@ export interface SubmitReviewResponse {
 
 export interface ServerConfig {
   repoPath: string;
+}
+
+// ── Manual Analysis (Prompt Download / Import) ─────────────
+
+/**
+ * Request body for importing manually-generated LLM analysis results.
+ * Uses snake_case keys to match the raw LLM JSON output format,
+ * so users can paste the LLM response directly without transformation.
+ */
+export interface ImportAnalysisRequest {
+  tags: Array<{ name: string; description: string }>;
+  chunk_assignments: Array<{
+    file_path: string;
+    chunk_index: number;
+    tags: string[];
+    priority: string;
+    review_note: string | null;
+  }>;
+}
+
+/**
+ * Response from the prompt download endpoint.
+ * Contains the full prompt text and a suggested filename.
+ */
+export interface PromptDownloadResponse {
+  prompt: string;
+  filename: string;
 }
 
 // ── Tag Summary ────────────────────────────────────────────

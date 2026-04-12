@@ -3,6 +3,8 @@ import type {
   ChunkMetadata,
   ChunkWithDetails,
   Comment,
+  DiffSide,
+  FileStatus,
   Priority,
   Tag,
 } from '@pr-review/shared';
@@ -119,12 +121,12 @@ export class ChunkService {
   }
 
   /**
-   * Get all tags.
+   * Get all tags for a specific PR.
    */
-  getAllTags(): Tag[] {
+  getTagsForPr(prId: number): Tag[] {
     const rows = this.db
-      .prepare('SELECT * FROM tags ORDER BY is_default DESC, name')
-      .all() as TagDbRow[];
+      .prepare('SELECT * FROM tags WHERE pr_id = ? ORDER BY name')
+      .all(prId) as TagDbRow[];
     return rows.map(mapTagRow);
   }
 
@@ -226,16 +228,16 @@ interface ChunkDbRow {
   diff_text: string;
   start_line: number;
   end_line: number;
+  file_status: string;
   approved: number;
   approved_at: string | null;
 }
 
 interface TagDbRow {
   id: number;
+  pr_id: number;
   name: string;
   description: string;
-  color: string;
-  is_default: number;
 }
 
 interface MetadataDbRow {
@@ -251,6 +253,7 @@ interface CommentDbRow {
   pr_id: number;
   body: string;
   line: number;
+  side: string;
   parent_id: number | null;
   author: string | null;
   gh_comment_id: number | null;
@@ -272,6 +275,7 @@ function mapChunkRow(row: ChunkDbRow): Chunk {
     diffText: row.diff_text,
     startLine: row.start_line,
     endLine: row.end_line,
+    fileStatus: row.file_status as FileStatus,
     approved: Boolean(row.approved),
     approvedAt: row.approved_at,
   };
@@ -280,10 +284,9 @@ function mapChunkRow(row: ChunkDbRow): Chunk {
 function mapTagRow(row: TagDbRow): Tag {
   return {
     id: row.id,
+    prId: row.pr_id,
     name: row.name,
     description: row.description,
-    color: row.color,
-    isDefault: Boolean(row.is_default),
   };
 }
 
@@ -303,6 +306,7 @@ function mapCommentRow(row: CommentDbRow): Comment {
     prId: row.pr_id,
     body: row.body,
     line: row.line,
+    side: (row.side === 'LEFT' ? 'LEFT' : 'RIGHT') as DiffSide,
     parentId: row.parent_id,
     author: row.author,
     ghCommentId: row.gh_comment_id,

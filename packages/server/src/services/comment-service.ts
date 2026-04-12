@@ -1,4 +1,4 @@
-import type { Comment } from '@pr-review/shared';
+import type { Comment, DiffSide } from '@pr-review/shared';
 import type Database from 'better-sqlite3';
 import { getOctokit } from './github-client.js';
 
@@ -9,7 +9,8 @@ export interface CommentServiceOptions {
 /**
  * Service for threaded comment CRUD, resolve/unresolve, and GitHub publishing.
  *
- * Comments are anchored to a specific new-file line within a chunk.
+ * Comments are anchored to a specific line within a chunk, on either the
+ * old-file side (LEFT) or new-file side (RIGHT) of the diff.
  * A thread is a root comment (parentId = null) plus flat replies (parentId = root.id).
  */
 export class CommentService {
@@ -28,6 +29,7 @@ export class CommentService {
     prId: number,
     body: string,
     line: number,
+    side: DiffSide = 'RIGHT',
     parentId?: number | null,
   ): Comment {
     if (parentId != null) {
@@ -47,11 +49,11 @@ export class CommentService {
 
     const row = this.db
       .prepare(
-        `INSERT INTO comments (chunk_id, pr_id, body, line, parent_id)
-       VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO comments (chunk_id, pr_id, body, line, side, parent_id)
+       VALUES (?, ?, ?, ?, ?, ?)
        RETURNING *`,
       )
-      .get(chunkId, prId, body, line, parentId ?? null) as CommentDbRow;
+      .get(chunkId, prId, body, line, side, parentId ?? null) as CommentDbRow;
 
     return mapCommentRow(row);
   }
@@ -225,7 +227,7 @@ export class CommentService {
   /**
    * Publish a single comment to GitHub as a PR review comment.
    *
-   * Root comments: uses createReviewComment with line, path, side: 'RIGHT'.
+   * Root comments: uses createReviewComment with line, path, and side from the comment.
    * Replies: uses createReplyForReviewComment with in_reply_to = parent's gh_comment_id.
    */
   async publishComment(
@@ -283,7 +285,7 @@ export class CommentService {
         commit_id: commitSha,
         path: chunk.file_path,
         line: comment.line,
-        side: 'RIGHT',
+        side: comment.side as DiffSide,
       });
 
       this.db
@@ -390,6 +392,7 @@ export class CommentService {
 
       // Find the chunk this comment belongs to
       const commentLine = ghComment.line ?? ghComment.original_line ?? 0;
+      const commentSide = (ghComment.side === 'LEFT' ? 'LEFT' : 'RIGHT') as DiffSide;
       const commentPath = ghComment.path;
       const chunk = chunks.find(
         (c) =>
@@ -405,8 +408,8 @@ export class CommentService {
 
       const row = this.db
         .prepare(
-          `INSERT INTO comments (chunk_id, pr_id, body, line, parent_id, author, gh_comment_id, gh_node_id, published_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO comments (chunk_id, pr_id, body, line, side, parent_id, author, gh_comment_id, gh_node_id, published_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`,
         )
         .get(
@@ -414,6 +417,7 @@ export class CommentService {
           prId,
           ghComment.body,
           commentLine,
+          commentSide,
           parentId,
           ghComment.user?.login ?? 'unknown',
           ghComment.id,
@@ -515,6 +519,7 @@ interface CommentDbRow {
   pr_id: number;
   body: string;
   line: number;
+  side: string;
   parent_id: number | null;
   author: string | null;
   gh_comment_id: number | null;
@@ -533,6 +538,7 @@ function mapCommentRow(row: CommentDbRow): Comment {
     prId: row.pr_id,
     body: row.body,
     line: row.line,
+    side: (row.side === 'LEFT' ? 'LEFT' : 'RIGHT') as DiffSide,
     parentId: row.parent_id,
     author: row.author,
     ghCommentId: row.gh_comment_id,

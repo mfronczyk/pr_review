@@ -314,4 +314,38 @@ describe('flattenChunks', () => {
     expect(flat[1].chunkIndex).toBe(1);
     expect(flat[2].chunkIndex).toBe(2);
   });
+
+  it('should propagate fileStatus from the parent file diff', () => {
+    const result = parseDiff(MULTI_FILE_DIFF);
+    const flat = flattenChunks(result);
+
+    expect(flat[0].fileStatus).toBe('modified');
+    expect(flat[1].fileStatus).toBe('added');
+  });
+
+  it('should set fileStatus to deleted for removed file chunks', () => {
+    const result = parseDiff(DELETED_FILE_DIFF);
+    const flat = flattenChunks(result);
+
+    expect(flat).toHaveLength(1);
+    expect(flat[0].fileStatus).toBe('deleted');
+  });
+
+  it('should set fileStatus to renamed for renamed file chunks', () => {
+    const result = parseDiff(RENAMED_FILE_DIFF);
+    const flat = flattenChunks(result);
+
+    expect(flat).toHaveLength(1);
+    expect(flat[0].fileStatus).toBe('renamed');
+  });
+
+  it('should set same fileStatus on all chunks of a multi-hunk file', () => {
+    const result = parseDiff(MULTI_HUNK_DIFF);
+    const flat = flattenChunks(result);
+
+    expect(flat).toHaveLength(3);
+    for (const chunk of flat) {
+      expect(chunk.fileStatus).toBe('modified');
+    }
+  });
 });

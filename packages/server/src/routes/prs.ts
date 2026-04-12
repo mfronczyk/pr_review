@@ -1,7 +1,9 @@
 import type {
   AddPrRequest,
+  ImportAnalysisRequest,
   LlmModelInfo,
   PrWithProgress,
+  PromptDownloadResponse,
   ReviewEvent,
   SubmitReviewRequest,
   TagSummary,
@@ -11,7 +13,12 @@ import { Router } from 'express';
 import { ChunkService } from '../services/chunk-service.js';
 import { parseDiff } from '../services/diff-parser.js';
 import { GitService } from '../services/git.js';
-import { analyzePr } from '../services/llm-analyzer.js';
+import {
+  analyzePr,
+  buildExportablePrompt,
+  mapTaggingResult,
+  storeChunkMetadata,
+} from '../services/llm-analyzer.js';
 import { PrService } from '../services/pr-service.js';
 
 export function createPrRoutes(
@@ -137,6 +144,14 @@ export function createPrRoutes(
    */
   router.post('/:id/analyze', async (req, res) => {
     try {
+      if (!modelInfo) {
+        res.status(503).json({
+          error:
+            'LLM analysis is not available. Start the server with LLM_MODEL=provider/model to enable it.',
+        });
+        return;
+      }
+
       const prId = Number(req.params.id);
       const pr = prService.getPr(prId);
       if (!pr) {
@@ -144,19 +159,18 @@ export function createPrRoutes(
         return;
       }
 
-      // Get the diff from local git
+      // Get the diff using the stored head SHA
       const git = new GitService({ repoPath });
-      const localBranch = `pr-${pr.number}`;
       const baseRef = `origin/${pr.baseRef}`;
 
-      // Ensure we have the branch
-      const branchExists = await git.refExists(localBranch);
-      if (!branchExists) {
-        await git.fetchPr(pr.number);
-      }
+      // Ensure the commit is available locally
+      await git.ensureShaFetched(pr.headSha);
 
-      const rawDiff = await git.diff(baseRef, localBranch);
+      const rawDiff = await git.diff(baseRef, pr.headSha);
       const fileDiffs = parseDiff(rawDiff);
+
+      // Get commit messages for additional context
+      const commitMessages = await git.getCommitLog(baseRef, pr.headSha);
 
       const result = await analyzePr(
         { db, repoPath },
@@ -165,6 +179,8 @@ export function createPrRoutes(
         pr.body,
         pr.author,
         pr.baseRef,
+        pr.headRef,
+        commitMessages,
         fileDiffs,
         modelInfo,
       );
@@ -230,6 +246,243 @@ export function createPrRoutes(
       }
       console.error(`[prs] Failed to submit review for PR #${prId}: ${message}`);
       res.status(500).json({ error: message });
+    }
+  });
+
+  /**
+   * GET /api/prs/:id/context
+   * Get file content lines at the PR's head revision for expanding diff context.
+   *
+   * Query params:
+   *   filePath  - path of the file in the repo
+   *   startLine - 1-indexed start line (inclusive)
+   *   endLine   - 1-indexed end line (inclusive)
+   *
+   * Returns: { lines: Array<{ lineNumber: number; content: string }> }
+   */
+  router.get('/:id/context', async (req, res) => {
+    try {
+      const prId = Number(req.params.id);
+      const filePath = req.query.filePath as string | undefined;
+      const startLine = Number(req.query.startLine);
+      const endLine = Number(req.query.endLine);
+
+      if (!filePath || !Number.isFinite(startLine) || !Number.isFinite(endLine)) {
+        res.status(400).json({ error: 'filePath, startLine, and endLine are required' });
+        return;
+      }
+      if (startLine < 1 || endLine < startLine) {
+        res
+          .status(400)
+          .json({ error: 'Invalid line range: startLine must be >= 1 and endLine >= startLine' });
+        return;
+      }
+
+      const pr = prService.getPr(prId);
+      if (!pr) {
+        res.status(404).json({ error: 'PR not found' });
+        return;
+      }
+
+      const git = new GitService({ repoPath });
+
+      // Ensure the commit is available locally
+      await git.ensureShaFetched(pr.headSha);
+
+      const fileContent = await git.getFileContent(pr.headSha, filePath);
+      const allLines = fileContent.split('\n');
+
+      // Clamp range to actual file length
+      const clampedStart = Math.max(1, startLine);
+      const clampedEnd = Math.min(allLines.length, endLine);
+
+      const lines: Array<{ lineNumber: number; content: string }> = [];
+      for (let i = clampedStart; i <= clampedEnd; i++) {
+        lines.push({ lineNumber: i, content: allLines[i - 1] });
+      }
+
+      res.json({ lines });
+    } catch (error) {
+      const message = errorMessage(error);
+      // git show fails if the file doesn't exist at that revision
+      if (message.includes('does not exist') || message.includes('exists on disk')) {
+        res.status(404).json({ error: `File not found at PR revision: ${req.query.filePath}` });
+        return;
+      }
+      res.status(500).json({ error: message });
+    }
+  });
+
+  /**
+   * GET /api/prs/:id/prompt
+   * Generate a self-contained tagging prompt for manual LLM analysis.
+   * The user downloads this as a .txt file and pastes it into VS Code Copilot Chat.
+   */
+  router.get('/:id/prompt', async (req, res) => {
+    try {
+      const prId = Number(req.params.id);
+      const pr = prService.getPr(prId);
+      if (!pr) {
+        res.status(404).json({ error: 'PR not found' });
+        return;
+      }
+
+      // Get the diff using the stored head SHA (same logic as analyze endpoint)
+      const git = new GitService({ repoPath });
+      const baseRef = `origin/${pr.baseRef}`;
+
+      await git.ensureShaFetched(pr.headSha);
+
+      const rawDiff = await git.diff(baseRef, pr.headSha);
+      const fileDiffs = parseDiff(rawDiff);
+      const commitMessages = await git.getCommitLog(baseRef, pr.headSha);
+
+      const prompt = buildExportablePrompt(
+        pr.title,
+        pr.body,
+        pr.author,
+        pr.baseRef,
+        pr.headRef,
+        commitMessages,
+        fileDiffs,
+      );
+
+      const filename = `pr-${pr.number}-tagging-prompt.txt`;
+      const result: PromptDownloadResponse = { prompt, filename };
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
+    }
+  });
+
+  /**
+   * POST /api/prs/:id/import-analysis
+   * Import manually-generated LLM analysis results.
+   * Accepts the raw JSON output from VS Code Copilot Chat and processes it
+   * through the same pipeline as the automated analysis.
+   */
+  router.post('/:id/import-analysis', (req, res) => {
+    try {
+      const prId = Number(req.params.id);
+      const pr = prService.getPr(prId);
+      if (!pr) {
+        res.status(404).json({ error: 'PR not found' });
+        return;
+      }
+
+      const body = req.body as ImportAnalysisRequest;
+
+      // Validate structure
+      if (!Array.isArray(body.tags) || !Array.isArray(body.chunk_assignments)) {
+        res.status(400).json({
+          error: 'Invalid format: expected { tags: [...], chunk_assignments: [...] }',
+        });
+        return;
+      }
+
+      // Reject empty arrays — an import with no tags or no assignments is almost
+      // certainly a broken LLM response, not an intentional "clear everything".
+      if (body.tags.length === 0) {
+        res.status(400).json({ error: 'tags array must not be empty' });
+        return;
+      }
+      if (body.chunk_assignments.length === 0) {
+        res.status(400).json({ error: 'chunk_assignments array must not be empty' });
+        return;
+      }
+
+      for (const tag of body.tags) {
+        if (typeof tag.name !== 'string' || typeof tag.description !== 'string') {
+          res.status(400).json({
+            error: 'Invalid tag: each tag must have "name" (string) and "description" (string)',
+          });
+          return;
+        }
+        if (tag.name.trim().length === 0) {
+          res.status(400).json({
+            error: 'Invalid tag: tag name must not be blank',
+          });
+          return;
+        }
+      }
+
+      for (const assignment of body.chunk_assignments) {
+        if (
+          typeof assignment.file_path !== 'string' ||
+          typeof assignment.chunk_index !== 'number' ||
+          !Array.isArray(assignment.tags) ||
+          typeof assignment.priority !== 'string'
+        ) {
+          res.status(400).json({
+            error:
+              'Invalid chunk_assignment: each must have "file_path" (string), "chunk_index" (number), "tags" (string[]), "priority" (string), and "review_note" (string|null)',
+          });
+          return;
+        }
+      }
+
+      // Check that assignments actually resolve to chunks in the database.
+      // If fewer than 50% of the PR's chunks are covered, the LLM likely
+      // hallucinated file paths / chunk indices — reject to avoid silently
+      // wiping existing tagging with near-empty results.
+      const totalChunks = (
+        db.prepare('SELECT COUNT(*) as count FROM chunks WHERE pr_id = ?').get(prId) as {
+          count: number;
+        }
+      ).count;
+
+      if (totalChunks > 0) {
+        const getChunk = db.prepare(
+          'SELECT id FROM chunks WHERE pr_id = ? AND file_path = ? AND chunk_index = ?',
+        );
+        let matched = 0;
+        const unmatchedPaths: string[] = [];
+        for (const a of body.chunk_assignments) {
+          const chunk = getChunk.get(prId, a.file_path, a.chunk_index) as
+            | { id: number }
+            | undefined;
+          if (chunk) {
+            matched++;
+          } else {
+            unmatchedPaths.push(`${a.file_path}:${a.chunk_index}`);
+          }
+        }
+
+        const coverageRatio = matched / totalChunks;
+        if (coverageRatio < 0.5) {
+          const preview = unmatchedPaths.slice(0, 5).join(', ');
+          const extra = unmatchedPaths.length > 5 ? ` (and ${unmatchedPaths.length - 5} more)` : '';
+          res.status(400).json({
+            error: `Import rejected: only ${matched}/${totalChunks} chunks matched (${Math.round(coverageRatio * 100)}% coverage, minimum is 50%). Unmatched assignments: ${preview}${extra}. The LLM may have hallucinated file paths or chunk indices — check that the analysis was generated from the current diff.`,
+          });
+          return;
+        }
+      }
+
+      // Record the LLM run as a manual import
+      const run = db
+        .prepare("INSERT INTO llm_runs (pr_id, status) VALUES (?, 'completed') RETURNING id")
+        .get(prId) as { id: number };
+
+      db.prepare("UPDATE llm_runs SET finished_at = datetime('now') WHERE id = ?").run(run.id);
+
+      // Map snake_case → camelCase and validate priorities
+      const mapped = mapTaggingResult(body);
+
+      // Store chunk metadata and tags (same pipeline as automated analysis)
+      storeChunkMetadata(db, prId, run.id, mapped.chunkAssignments, mapped.tags);
+
+      console.log(
+        `[prs] Manual import for PR #${prId}: ${mapped.chunkAssignments.length} chunks tagged, ${mapped.tags.length} tags defined`,
+      );
+
+      res.json({
+        tags: mapped.tags,
+        chunkAssignments: mapped.chunkAssignments,
+        tagSummaries: [],
+      });
+    } catch (error) {
+      res.status(500).json({ error: errorMessage(error) });
     }
   });
 

@@ -3,14 +3,23 @@
  * Shows file diffs with tag-based grouping sidebar and chunk review controls.
  */
 
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import * as api from '@/api';
 import { DiffViewer } from '@/components/DiffViewer';
+import { Markdown } from '@/components/Markdown';
 import { SubmitReviewDialog } from '@/components/SubmitReviewDialog';
+import { formatRelativeTime } from '@/format-time';
 import { useAsync } from '@/hooks/use-async';
-import type { ChunkWithDetails, PrWithProgress, ReviewEvent, Tag } from '@pr-review/shared';
+import { getTagColor } from '@/tag-colors';
+import type {
+  ChunkWithDetails,
+  FileStatus,
+  PrWithProgress,
+  ReviewEvent,
+  Tag,
+} from '@pr-review/shared';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -110,9 +119,10 @@ interface TreeNode {
   fullPath: string;
   children: Map<string, TreeNode>;
   isFile: boolean;
+  fileStatus?: FileStatus;
 }
 
-function buildFileTree(files: string[]): TreeNode {
+function buildFileTree(files: string[], fileStatusMap: Map<string, FileStatus>): TreeNode {
   const root: TreeNode = { name: '', fullPath: '', children: new Map(), isFile: false };
   for (const filePath of files) {
     const parts = filePath.split('/');
@@ -133,6 +143,7 @@ function buildFileTree(files: string[]): TreeNode {
       if (isLast) {
         child.isFile = true;
         child.fullPath = filePath;
+        child.fileStatus = fileStatusMap.get(filePath);
       }
       current = child;
     }
@@ -154,6 +165,7 @@ function collapseTree(node: TreeNode): TreeNode {
         fullPath: only.fullPath,
         children: only.children,
         isFile: only.isFile,
+        fileStatus: only.fileStatus,
       };
     }
     // Recursively collapse children
@@ -175,6 +187,20 @@ function sortTreeNodes(a: TreeNode, b: TreeNode): number {
   return a.name.localeCompare(b.name);
 }
 
+/** Get the file status indicator character and color class for the sidebar tree. */
+function fileStatusIndicator(status?: FileStatus): { char: string; colorClass: string } {
+  switch (status) {
+    case 'added':
+      return { char: 'A', colorClass: 'text-green-500' };
+    case 'deleted':
+      return { char: 'D', colorClass: 'text-red-500' };
+    case 'renamed':
+      return { char: 'R', colorClass: 'text-blue-500' };
+    default:
+      return { char: 'M', colorClass: 'text-fg-faint' };
+  }
+}
+
 function FileTreeNode({
   node,
   depth,
@@ -194,6 +220,7 @@ function FileTreeNode({
   const isCollapsed = collapsedDirs.has(node.fullPath);
 
   if (node.isFile) {
+    const { char, colorClass } = fileStatusIndicator(node.fileStatus);
     return (
       <button
         type="button"
@@ -204,7 +231,7 @@ function FileTreeNode({
         style={{ paddingLeft: `${depth * 12 + 4}px` }}
         title={node.fullPath}
       >
-        <span className="flex-shrink-0 text-fg-faint">~</span>
+        <span className={`flex-shrink-0 text-[10px] font-medium ${colorClass}`}>{char}</span>
         <span className="truncate">{node.name}</span>
       </button>
     );
@@ -245,6 +272,7 @@ const Sidebar = memo(function Sidebar({
   pr,
   groups,
   files,
+  fileStatusMap,
   activeFilter,
   activeFile,
   onFilterByTag,
@@ -255,6 +283,7 @@ const Sidebar = memo(function Sidebar({
   pr: PrWithProgress;
   groups: GroupInfo[];
   files: string[];
+  fileStatusMap: Map<string, FileStatus>;
   activeFilter: { type: 'tag'; value: string } | null;
   activeFile: string | null;
   onFilterByTag: (tagName: string) => void;
@@ -264,8 +293,11 @@ const Sidebar = memo(function Sidebar({
 }): React.ReactElement {
   const [filesExpanded, setFilesExpanded] = useState(true);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
+  const [groupsHeight, setGroupsHeight] = useState<number | null>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
 
-  const fileTree = useMemo(() => buildFileTree(files), [files]);
+  const fileTree = useMemo(() => buildFileTree(files, fileStatusMap), [files, fileStatusMap]);
 
   function handleToggleDir(dirPath: string): void {
     setCollapsedDirs((prev) => {
@@ -279,13 +311,53 @@ const Sidebar = memo(function Sidebar({
     });
   }
 
+  // Drag-to-resize handler for the divider between Groups and Files
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const sidebar = sidebarRef.current;
+    if (!sidebar) return;
+
+    const groupsEl = sidebar.querySelector('[data-section="groups"]') as HTMLElement | null;
+    if (!groupsEl) return;
+
+    dragRef.current = { startY: e.clientY, startHeight: groupsEl.offsetHeight };
+
+    const handleMouseMove = (ev: MouseEvent): void => {
+      if (!dragRef.current || !sidebar) return;
+      const delta = ev.clientY - dragRef.current.startY;
+      const sidebarHeight = sidebar.offsetHeight;
+      // Minimum 60px, maximum 80% of sidebar
+      const newHeight = Math.max(
+        60,
+        Math.min(sidebarHeight * 0.8, dragRef.current.startHeight + delta),
+      );
+      setGroupsHeight(newHeight);
+    };
+
+    const handleMouseUp = (): void => {
+      dragRef.current = null;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+
   const sortedRootChildren = useMemo(
     () => Array.from(fileTree.children.values()).sort(sortTreeNodes),
     [fileTree],
   );
 
   return (
-    <aside className="flex w-64 flex-shrink-0 flex-col border-r border-border-primary bg-surface-primary">
+    <aside
+      ref={sidebarRef}
+      className="flex w-64 flex-shrink-0 flex-col border-r border-border-primary bg-surface-primary"
+    >
       {/* PR info — fixed */}
       <div className="flex-shrink-0 border-b border-border-secondary p-4">
         <Link to="/" className="text-xs text-fg-muted hover:text-fg-secondary">
@@ -294,6 +366,20 @@ const Sidebar = memo(function Sidebar({
         <h2 className="mt-2 truncate text-sm font-semibold text-fg-primary">{pr.title}</h2>
         <p className="mt-1 text-xs text-fg-muted">
           {pr.owner}/{pr.repo}#{pr.number}
+        </p>
+        <p
+          className="mt-1 truncate text-[11px] text-fg-tertiary"
+          title={`${pr.headRef} \u2192 ${pr.baseRef}`}
+        >
+          {pr.headRef} &rarr; {pr.baseRef}
+        </p>
+        {pr.commitCount > 0 && (
+          <p className="mt-0.5 text-[11px] text-fg-tertiary">
+            {pr.commitCount} commit{pr.commitCount !== 1 ? 's' : ''}
+          </p>
+        )}
+        <p className="mt-0.5 text-[10px] text-fg-tertiary" title={`Last synced: ${pr.syncedAt}`}>
+          Synced {formatRelativeTime(pr.syncedAt)}
         </p>
         <div className="mt-2 flex items-center gap-2">
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-tertiary">
@@ -310,10 +396,11 @@ const Sidebar = memo(function Sidebar({
         </div>
       </div>
 
-      {/* Groups section — scrollable, max 40% of sidebar */}
+      {/* Groups section — resizable via drag handle */}
       <div
-        className="flex-shrink-0 overflow-y-auto border-b border-border-secondary p-4"
-        style={{ maxHeight: '40%' }}
+        data-section="groups"
+        className="flex-shrink-0 overflow-y-auto p-4"
+        style={groupsHeight != null ? { height: `${groupsHeight}px` } : { maxHeight: '40%' }}
       >
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-fg-muted">
           Groups
@@ -348,7 +435,7 @@ const Sidebar = memo(function Sidebar({
                   <div className="flex items-center gap-2 min-w-0">
                     <span
                       className="inline-block h-2 w-2 flex-shrink-0 rounded-full"
-                      style={{ backgroundColor: g.tag.color || '#6b7280' }}
+                      style={{ backgroundColor: getTagColor(g.tag.name) }}
                     />
                     <span className={`truncate ${allApproved ? 'text-fg-muted' : ''}`}>
                       {g.tag.name}
@@ -376,7 +463,7 @@ const Sidebar = memo(function Sidebar({
                   <ProgressDots
                     total={g.chunks.length}
                     approved={g.approvedCount}
-                    color={g.tag.color || '#6b7280'}
+                    color={getTagColor(g.tag.name)}
                   />
                 </div>
               </div>
@@ -387,6 +474,14 @@ const Sidebar = memo(function Sidebar({
           )}
         </div>
       </div>
+
+      {/* Drag handle to resize Groups / Files split */}
+      <div
+        onMouseDown={handleDragStart}
+        className="flex-shrink-0 cursor-row-resize border-y border-border-secondary bg-surface-secondary hover:bg-border-primary"
+        style={{ height: '5px' }}
+        title="Drag to resize"
+      />
 
       {/* Files section — takes remaining space, scrollable */}
       <div className="flex-1 overflow-y-auto p-4">
@@ -425,13 +520,20 @@ function Toolbar({
   onToggleHideApproved,
   showUnresolved,
   onToggleShowUnresolved,
+  wrapLines,
+  onToggleWrapLines,
   onSync,
   onAnalyze,
+  onDownloadPrompt,
+  onImportResults,
   onPublishAll,
   onSubmitReview,
   syncing,
   analyzing,
+  downloadingPrompt,
+  importing,
   unpublishedCount,
+  llmAvailable,
   modelLabel,
   additions,
   deletions,
@@ -440,18 +542,26 @@ function Toolbar({
   onToggleHideApproved: () => void;
   showUnresolved: boolean;
   onToggleShowUnresolved: () => void;
+  wrapLines: boolean;
+  onToggleWrapLines: () => void;
   onSync: () => void;
   onAnalyze: () => void;
+  onDownloadPrompt: () => void;
+  onImportResults: (file: File) => void;
   onPublishAll: () => Promise<void>;
   onSubmitReview: () => void;
   syncing: boolean;
   analyzing: boolean;
+  downloadingPrompt: boolean;
+  importing: boolean;
   unpublishedCount: number;
+  llmAvailable: boolean;
   modelLabel: string | null;
   additions: number;
   deletions: number;
 }): React.ReactElement {
   const [publishing, setPublishing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handlePublish(): Promise<void> {
     setPublishing(true);
@@ -459,6 +569,17 @@ function Toolbar({
       await onPublishAll();
     } finally {
       setPublishing(false);
+    }
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>): void {
+    const file = e.target.files?.[0];
+    if (file) {
+      onImportResults(file);
+      // Reset so the same file can be re-selected
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   }
 
@@ -482,6 +603,15 @@ function Toolbar({
             className="rounded border-border-primary bg-surface-input text-blue-500 focus:ring-blue-500"
           />
           Show unresolved
+        </label>
+        <label className="flex items-center gap-2 text-xs text-fg-tertiary">
+          <input
+            type="checkbox"
+            checked={wrapLines}
+            onChange={onToggleWrapLines}
+            className="rounded border-border-primary bg-surface-input text-blue-500 focus:ring-blue-500"
+          />
+          Wrap lines
         </label>
         <span className="text-xs font-mono">
           <span className="text-green-600 dark:text-green-400">+{additions}</span>{' '}
@@ -508,6 +638,7 @@ function Toolbar({
         >
           Submit Review
         </button>
+        <span className="mx-1 h-4 w-px bg-border-primary" />
         <button
           type="button"
           onClick={onSync}
@@ -516,14 +647,42 @@ function Toolbar({
         >
           {syncing ? 'Fetching...' : 'Fetch Latest'}
         </button>
+        {llmAvailable && (
+          <button
+            type="button"
+            onClick={onAnalyze}
+            disabled={analyzing}
+            className="rounded-md bg-purple-600 px-3 py-1 text-xs text-white hover:bg-purple-500 disabled:opacity-50 dark:bg-purple-700 dark:hover:bg-purple-600"
+          >
+            {analyzing ? 'Analyzing...' : `Analyze with LLM${modelLabel ? ` (${modelLabel})` : ''}`}
+          </button>
+        )}
+        <span className="mx-1 h-4 w-px bg-border-primary" />
         <button
           type="button"
-          onClick={onAnalyze}
-          disabled={analyzing}
-          className="rounded-md bg-purple-600 px-3 py-1 text-xs text-white hover:bg-purple-500 disabled:opacity-50 dark:bg-purple-700 dark:hover:bg-purple-600"
+          onClick={onDownloadPrompt}
+          disabled={downloadingPrompt}
+          title="Download the tagging prompt as a text file to paste into VS Code Copilot Chat"
+          className="rounded-md border border-border-primary bg-surface-secondary px-3 py-1 text-xs text-fg-secondary hover:bg-surface-tertiary disabled:opacity-50"
         >
-          {analyzing ? 'Analyzing...' : `Analyze with LLM${modelLabel ? ` (${modelLabel})` : ''}`}
+          {downloadingPrompt ? 'Preparing...' : 'Download Prompt'}
         </button>
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={importing}
+          title="Upload JSON results from manual LLM analysis"
+          className="rounded-md border border-border-primary bg-surface-secondary px-3 py-1 text-xs text-fg-secondary hover:bg-surface-tertiary disabled:opacity-50"
+        >
+          {importing ? 'Importing...' : 'Upload Results'}
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json"
+          onChange={handleFileChange}
+          className="hidden"
+        />
       </div>
     </div>
   );
@@ -543,8 +702,11 @@ export function ReviewPage(): React.ReactElement {
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [hideApproved, setHideApproved] = useState(false);
   const [showUnresolved, setShowUnresolved] = useState(false);
+  const [wrapLines, setWrapLines] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [downloadingPrompt, setDownloadingPrompt] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -574,7 +736,7 @@ export function ReviewPage(): React.ReactElement {
     }
   }, [fetchedChunks]);
 
-  const { data: tags } = useAsync(() => api.getTags(), []);
+  const { data: tags, reload: reloadTags } = useAsync(() => api.getTags(prId), [prId]);
 
   const { data: tagSummaries, reload: reloadTagSummaries } = useAsync(
     () => api.getTagSummaries(prId),
@@ -591,8 +753,9 @@ export function ReviewPage(): React.ReactElement {
   const reload = useCallback(() => {
     reloadPr();
     reloadChunks();
+    reloadTags();
     reloadTagSummaries();
-  }, [reloadPr, reloadChunks, reloadTagSummaries]);
+  }, [reloadPr, reloadChunks, reloadTags, reloadTagSummaries]);
 
   /** Wraps an async action with error handling. */
   const withErrorHandling = useCallback(async (fn: () => Promise<void>): Promise<void> => {
@@ -629,11 +792,13 @@ export function ReviewPage(): React.ReactElement {
     return Array.from(map.values()).sort((a, b) => b.chunks.length - a.chunks.length);
   }, [chunks, tags, tagSummaries]);
 
-  // Derive the summary for the currently selected group (if any)
-  const activeGroupSummary = useMemo((): string | null => {
-    if (!activeFilter) return null;
-    const group = groups.find((g) => g.tag.name === activeFilter.value);
-    return group?.summary ?? null;
+  // Derive the active group to show in the main view header:
+  // When a tag group is selected, expose it for the tag name + summary display
+  const activeGroup = useMemo((): GroupInfo | null => {
+    if (activeFilter) {
+      return groups.find((g) => g.tag.name === activeFilter.value) ?? null;
+    }
+    return null;
   }, [activeFilter, groups]);
 
   // Get unique file list — scoped to the active tag filter so the sidebar
@@ -648,6 +813,19 @@ export function ReviewPage(): React.ReactElement {
     for (const c of source) seen.add(c.filePath);
     return Array.from(seen).sort();
   }, [chunks, activeFilter]);
+
+  // Build a map of file path → file status for sidebar indicators.
+  // Uses the first chunk's status for each file (all chunks in a file share the same status).
+  const fileStatusMap = useMemo((): Map<string, FileStatus> => {
+    const map = new Map<string, FileStatus>();
+    if (!chunks) return map;
+    for (const c of chunks) {
+      if (!map.has(c.filePath)) {
+        map.set(c.filePath, c.fileStatus);
+      }
+    }
+    return map;
+  }, [chunks]);
 
   // Derive PR progress from local chunks state — avoids refetching PR on every toggle
   const prWithLocalProgress = useMemo((): PrWithProgress | null => {
@@ -707,6 +885,39 @@ export function ReviewPage(): React.ReactElement {
     setAnalyzing(false);
   }
 
+  async function handleDownloadPrompt(): Promise<void> {
+    setDownloadingPrompt(true);
+    await withErrorHandling(async () => {
+      const { prompt, filename } = await api.getPrompt(prId);
+      const blob = new Blob([prompt], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+    setDownloadingPrompt(false);
+  }
+
+  async function handleImportResults(file: File): Promise<void> {
+    setImporting(true);
+    await withErrorHandling(async () => {
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error('Invalid JSON file. Please upload the raw JSON output from the LLM.');
+      }
+      await api.importAnalysis(prId, parsed as import('@pr-review/shared').ImportAnalysisRequest);
+      reload();
+    });
+    setImporting(false);
+  }
+
   const handleToggleApproved = useCallback(
     async (chunkId: number): Promise<void> => {
       // Check if this chunk is currently unapproved (will become approved)
@@ -751,9 +962,9 @@ export function ReviewPage(): React.ReactElement {
   );
 
   const handleAddComment = useCallback(
-    async (chunkId: number, body: string, line: number): Promise<void> => {
+    async (chunkId: number, body: string, line: number, side: 'LEFT' | 'RIGHT'): Promise<void> => {
       await withErrorHandling(async () => {
-        const comment = await api.createComment({ chunkId, prId, body, line });
+        const comment = await api.createComment({ chunkId, prId, body, line, side });
         // Optimistically add the comment to local state
         setChunks((prev) => {
           if (!prev) return prev;
@@ -769,10 +980,11 @@ export function ReviewPage(): React.ReactElement {
   const handleReplyComment = useCallback(
     async (chunkId: number, parentId: number, body: string): Promise<void> => {
       await withErrorHandling(async () => {
-        // Find the parent to get line number
+        // Find the parent to get line number and side
         const parentComment = chunks?.flatMap((c) => c.comments).find((cm) => cm.id === parentId);
         const line = parentComment?.line ?? 0;
-        const comment = await api.createComment({ chunkId, prId, body, line, parentId });
+        const side = parentComment?.side ?? 'RIGHT';
+        const comment = await api.createComment({ chunkId, prId, body, line, side, parentId });
         setChunks((prev) => {
           if (!prev) return prev;
           return prev.map((c) =>
@@ -850,9 +1062,24 @@ export function ReviewPage(): React.ReactElement {
             comments: c.comments.map((cm) => (cm.id === commentId ? resolved : cm)),
           }));
         });
+
+        // If resolving this thread will cause an approved chunk to be hidden
+        // (no remaining unresolved threads), trigger the departure animation
+        // so it fades out instead of vanishing and causing a scroll-to-top.
+        if (hideApproved) {
+          const chunk = chunks?.find((c) => c.comments.some((cm) => cm.id === commentId));
+          if (chunk?.approved) {
+            const remainingUnresolved = chunk.comments.filter(
+              (cm) => cm.parentId === null && !cm.resolved && cm.id !== commentId,
+            );
+            if (remainingUnresolved.length === 0) {
+              setDepartingChunkIds((prev) => new Set(prev).add(chunk.id));
+            }
+          }
+        }
       });
     },
-    [withErrorHandling],
+    [chunks, hideApproved, withErrorHandling],
   );
 
   const handleUnresolveThread = useCallback(
@@ -967,6 +1194,7 @@ export function ReviewPage(): React.ReactElement {
         pr={prWithLocalProgress}
         groups={groups}
         files={files}
+        fileStatusMap={fileStatusMap}
         activeFilter={activeFilter}
         activeFile={activeFile}
         onFilterByTag={handleFilterByTag}
@@ -983,23 +1211,24 @@ export function ReviewPage(): React.ReactElement {
           onToggleHideApproved={handleToggleHideApproved}
           showUnresolved={showUnresolved}
           onToggleShowUnresolved={() => setShowUnresolved((v) => !v)}
+          wrapLines={wrapLines}
+          onToggleWrapLines={() => setWrapLines((v) => !v)}
           onSync={handleSync}
           onAnalyze={handleAnalyze}
+          onDownloadPrompt={handleDownloadPrompt}
+          onImportResults={handleImportResults}
           onPublishAll={handlePublishAll}
           onSubmitReview={() => setReviewDialogOpen(true)}
           syncing={syncing}
           analyzing={analyzing}
+          downloadingPrompt={downloadingPrompt}
+          importing={importing}
           unpublishedCount={unpublishedCount}
+          llmAvailable={modelInfo != null}
           modelLabel={modelLabel}
           additions={prWithLocalProgress.additions}
           deletions={prWithLocalProgress.deletions}
         />
-
-        {activeGroupSummary && (
-          <div className="flex-shrink-0 border-b border-border-secondary bg-surface-secondary px-4 py-2">
-            <p className="text-xs text-fg-secondary">{activeGroupSummary}</p>
-          </div>
-        )}
 
         <div className="flex-1 overflow-hidden">
           {filteredChunks.length === 0 ? (
@@ -1013,6 +1242,35 @@ export function ReviewPage(): React.ReactElement {
               chunks={filteredChunks}
               departingChunkIds={departingChunkIds}
               scrollToFile={scrollToFile}
+              wrapLines={wrapLines}
+              headerContent={
+                activeGroup ? (
+                  <div className="mx-auto mb-4 max-w-3xl">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span
+                        className="inline-block h-2.5 w-2.5 flex-shrink-0 rounded-full"
+                        style={{ backgroundColor: getTagColor(activeGroup.tag.name) }}
+                      />
+                      <h2 className="text-sm font-semibold text-fg-primary">
+                        {activeGroup.tag.name}
+                      </h2>
+                    </div>
+                    {activeGroup.tag.description && (
+                      <p className="text-xs text-fg-muted mb-1 ml-[18px]">
+                        {activeGroup.tag.description}
+                      </p>
+                    )}
+                    {activeGroup.summary && (
+                      <div className="rounded-lg border border-border-secondary bg-surface-secondary px-4 py-2">
+                        <Markdown
+                          text={activeGroup.summary}
+                          className="text-xs text-fg-secondary"
+                        />
+                      </div>
+                    )}
+                  </div>
+                ) : undefined
+              }
               onToggleApproved={handleToggleApproved}
               onChunkDeparted={handleChunkDeparted}
               onScrollToFileDone={handleScrollToFileDone}

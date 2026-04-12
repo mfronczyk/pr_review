@@ -5,6 +5,7 @@
 
 import { useState } from 'react';
 
+import { Markdown } from '@/components/Markdown';
 import type { Comment, CommentThread } from '@pr-review/shared';
 
 interface InlineThreadProps {
@@ -107,7 +108,7 @@ function CommentItem({
   }
 
   return (
-    <div className="group flex items-start gap-2 rounded bg-surface-secondary/50 p-2">
+    <div className="group flex max-w-3xl items-start gap-2 rounded bg-surface-secondary/50 p-2">
       <div className="min-w-0 flex-1">
         <div className="mb-0.5 flex items-center gap-1.5">
           <span
@@ -120,7 +121,7 @@ function CommentItem({
           </span>
           {comment.publishedAt && <span className="text-[10px] text-success-fg">Published</span>}
         </div>
-        <p className="whitespace-pre-wrap text-xs text-fg-secondary">{comment.body}</p>
+        <Markdown variant="comment" text={comment.body} />
       </div>
       {isLocal && !comment.publishedAt && (
         <div className="hidden flex-shrink-0 gap-1 group-hover:flex">
@@ -219,7 +220,9 @@ export function NewCommentForm({
 }): React.ReactElement {
   return (
     <div className="border-t border-border-secondary bg-surface-primary/50 px-3 py-2">
-      <AddCommentForm onAdd={onAdd} onCancel={onCancel} />
+      <div className="max-w-3xl">
+        <AddCommentForm onAdd={onAdd} onCancel={onCancel} />
+      </div>
     </div>
   );
 }
@@ -265,59 +268,61 @@ export function InlineThread({
   }
 
   return (
-    <div className="space-y-1.5 border-t border-border-secondary bg-surface-primary/50 px-3 py-2">
-      {/* Root comment */}
-      <CommentItem comment={root} onUpdate={onUpdate} onDelete={onDelete} onPublish={onPublish} />
+    <div className="border-t border-border-secondary bg-surface-primary/50 px-3 py-2">
+      <div className="max-w-3xl space-y-1.5">
+        {/* Root comment */}
+        <CommentItem comment={root} onUpdate={onUpdate} onDelete={onDelete} onPublish={onPublish} />
 
-      {/* Replies */}
-      {replies.length > 0 && (
-        <div className="ml-4 space-y-1.5 border-l-2 border-border-secondary pl-2">
-          {replies.map((reply) => (
-            <CommentItem
-              key={reply.id}
-              comment={reply}
-              onUpdate={onUpdate}
-              onDelete={onDelete}
-              onPublish={onPublish}
-            />
-          ))}
-        </div>
-      )}
+        {/* Replies */}
+        {replies.length > 0 && (
+          <div className="ml-4 space-y-1.5 border-l-2 border-border-secondary pl-2">
+            {replies.map((reply) => (
+              <CommentItem
+                key={reply.id}
+                comment={reply}
+                onUpdate={onUpdate}
+                onDelete={onDelete}
+                onPublish={onPublish}
+              />
+            ))}
+          </div>
+        )}
 
-      {/* Actions bar */}
-      <div className="flex items-center gap-2">
-        {!replying && (
+        {/* Actions bar */}
+        <div className="flex items-center gap-2">
+          {!replying && (
+            <button
+              type="button"
+              onClick={() => setReplying(true)}
+              className="rounded px-1.5 py-0.5 text-[10px] text-blue-500 hover:bg-blue-100 hover:text-blue-700 dark:hover:bg-blue-900/50 dark:hover:text-blue-300"
+            >
+              Reply
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => setReplying(true)}
-            className="rounded px-1.5 py-0.5 text-[10px] text-blue-500 hover:bg-blue-100 hover:text-blue-700 dark:hover:bg-blue-900/50 dark:hover:text-blue-300"
+            onClick={() => onResolve(root.id)}
+            className="rounded px-1.5 py-0.5 text-[10px] text-green-600 hover:bg-green-100 hover:text-green-700 dark:text-green-400 dark:hover:bg-green-900/50 dark:hover:text-green-300"
           >
-            Reply
+            Resolve
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => onResolve(root.id)}
-          className="rounded px-1.5 py-0.5 text-[10px] text-green-600 hover:bg-green-100 hover:text-green-700 dark:text-green-400 dark:hover:bg-green-900/50 dark:hover:text-green-300"
-        >
-          Resolve
-        </button>
-      </div>
-
-      {/* Reply form */}
-      {replying && (
-        <div className="ml-4 border-l-2 border-border-secondary pl-2">
-          <AddCommentForm
-            onAdd={async (body) => {
-              await onReply(root.id, body);
-              setReplying(false);
-            }}
-            onCancel={() => setReplying(false)}
-            placeholder="Write a reply..."
-            submitLabel="Reply"
-          />
         </div>
-      )}
+
+        {/* Reply form */}
+        {replying && (
+          <div className="ml-4 border-l-2 border-border-secondary pl-2">
+            <AddCommentForm
+              onAdd={async (body) => {
+                await onReply(root.id, body);
+                setReplying(false);
+              }}
+              onCancel={() => setReplying(false)}
+              placeholder="Write a reply..."
+              submitLabel="Reply"
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

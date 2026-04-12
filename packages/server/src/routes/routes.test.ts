@@ -91,14 +91,34 @@ describe('GET /api/llm/model', () => {
   });
 });
 
-describe('GET /api/tags', () => {
-  it('should return default tags', async () => {
-    const res = await request(app).get('/api/tags');
+describe('GET /api/prs/:prId/tags', () => {
+  it('should return empty array when no tags exist for PR', async () => {
+    const res = await request(app).get('/api/prs/1/tags');
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body.length).toBeGreaterThanOrEqual(10);
+    expect(res.body).toHaveLength(0);
+  });
+
+  it('should return tags created for a PR', async () => {
+    // Create tags for PR 1
+    db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
+      1,
+      'api-changes',
+      'API endpoint changes',
+    );
+    db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
+      1,
+      'validation',
+      'Input validation',
+    );
+
+    const res = await request(app).get('/api/prs/1/tags');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body).toHaveLength(2);
     expect(res.body[0]).toHaveProperty('name');
-    expect(res.body[0]).toHaveProperty('color');
+    expect(res.body[0]).toHaveProperty('prId');
+    expect(res.body[0]).not.toHaveProperty('color');
   });
 });
 
@@ -147,19 +167,19 @@ describe('Chunk routes', () => {
   });
 
   it('PUT /api/chunks/:id/tags should replace tags', async () => {
-    // Get tag IDs first
-    const tagsRes = await request(app).get('/api/tags');
-    const bugFixTag = tagsRes.body.find((t: { name: string }) => t.name === 'bug-fix');
-    const refactorTag = tagsRes.body.find((t: { name: string }) => t.name === 'refactor');
+    // Tags should already exist from the previous test block
+    const tagsRes = await request(app).get('/api/prs/1/tags');
+    const apiTag = tagsRes.body.find((t: { name: string }) => t.name === 'api-changes');
+    const valTag = tagsRes.body.find((t: { name: string }) => t.name === 'validation');
 
     const res = await request(app)
       .put('/api/chunks/1/tags')
-      .send({ tagIds: [bugFixTag.id, refactorTag.id] });
+      .send({ tagIds: [apiTag.id, valTag.id] });
     expect(res.status).toBe(200);
     expect(res.body.tags.length).toBe(2);
     expect(res.body.tags.map((t: { name: string }) => t.name).sort()).toEqual([
-      'bug-fix',
-      'refactor',
+      'api-changes',
+      'validation',
     ]);
   });
 
@@ -170,13 +190,13 @@ describe('Chunk routes', () => {
 
   it('POST /api/prs/:prId/bulk-approve should approve chunks by tag', async () => {
     // Tag chunk 2 as well
-    const tagsRes = await request(app).get('/api/tags');
-    const refactorTag = tagsRes.body.find((t: { name: string }) => t.name === 'refactor');
+    const tagsRes = await request(app).get('/api/prs/1/tags');
+    const valTag = tagsRes.body.find((t: { name: string }) => t.name === 'validation');
     await request(app)
       .put('/api/chunks/2/tags')
-      .send({ tagIds: [refactorTag.id] });
+      .send({ tagIds: [valTag.id] });
 
-    const res = await request(app).post('/api/prs/1/bulk-approve').send({ tagId: refactorTag.id });
+    const res = await request(app).post('/api/prs/1/bulk-approve').send({ tagId: valTag.id });
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('approved');
     expect(res.body.approved).toBeGreaterThanOrEqual(1);
@@ -194,10 +214,20 @@ describe('Comment routes', () => {
     expect(res.body).toHaveProperty('id');
     expect(res.body).toHaveProperty('body', 'Test comment');
     expect(res.body).toHaveProperty('line', 3);
+    expect(res.body).toHaveProperty('side', 'RIGHT');
     expect(res.body).toHaveProperty('parentId', null);
     expect(res.body).toHaveProperty('author', null);
     expect(res.body).toHaveProperty('resolved', false);
     commentId = res.body.id;
+  });
+
+  it('POST /api/comments should create a LEFT-side comment', async () => {
+    const res = await request(app)
+      .post('/api/comments')
+      .send({ chunkId: 1, prId: 1, body: 'Deleted line comment', line: 5, side: 'LEFT' });
+    expect(res.status).toBe(201);
+    expect(res.body).toHaveProperty('side', 'LEFT');
+    expect(res.body).toHaveProperty('line', 5);
   });
 
   it('POST /api/comments should create a reply', async () => {
@@ -288,8 +318,13 @@ describe('Tag summary routes', () => {
       .prepare("INSERT INTO llm_runs (pr_id, status) VALUES (1, 'completed') RETURNING id")
       .get() as { id: number };
 
-    // Get a tag ID
-    const tag = db.prepare("SELECT id FROM tags WHERE name = 'bug-fix'").get() as { id: number };
+    // Create a tag for this PR (may already exist from earlier tests, so use INSERT OR IGNORE)
+    db.prepare(
+      "INSERT OR IGNORE INTO tags (pr_id, name, description) VALUES (1, 'input-validation-fix', 'Fixes input validation bugs')",
+    ).run();
+    const tag = db
+      .prepare("SELECT id FROM tags WHERE name = 'input-validation-fix' AND pr_id = 1")
+      .get() as { id: number };
 
     // Insert a tag summary
     db.prepare(
@@ -301,7 +336,7 @@ describe('Tag summary routes', () => {
     expect(res.body).toHaveLength(1);
     expect(res.body[0]).toEqual({
       tagId: tag.id,
-      tagName: 'bug-fix',
+      tagName: 'input-validation-fix',
       summary: 'This group fixes input validation bugs in the registration flow.',
     });
 

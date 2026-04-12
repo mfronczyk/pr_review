@@ -7,9 +7,11 @@ import type {
   AddPrRequest,
   ChunkWithDetails,
   Comment,
+  ImportAnalysisRequest,
   LlmAnalysisResult,
   LlmModelInfo,
   PrWithProgress,
+  PromptDownloadResponse,
   PullRequest,
   ReviewEvent,
   ServerConfig,
@@ -77,6 +79,20 @@ export function analyzePr(id: number): Promise<LlmAnalysisResult> {
   return request(`/api/prs/${id}/analyze`, { method: 'POST' });
 }
 
+export function getPrompt(prId: number): Promise<PromptDownloadResponse> {
+  return request(`/api/prs/${prId}/prompt`);
+}
+
+export function importAnalysis(
+  prId: number,
+  data: ImportAnalysisRequest,
+): Promise<LlmAnalysisResult> {
+  return request(`/api/prs/${prId}/import-analysis`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
 export function getTagSummaries(prId: number): Promise<TagSummary[]> {
   return request(`/api/prs/${prId}/tag-summaries`);
 }
@@ -136,8 +152,29 @@ export function bulkApprove(prId: number, tagId: number): Promise<{ approved: nu
   });
 }
 
-export function getTags(): Promise<Tag[]> {
-  return request('/api/tags');
+export function getTags(prId: number): Promise<Tag[]> {
+  return request(`/api/prs/${prId}/tags`);
+}
+
+// ── Context Lines ───────────────────────────────────────────
+
+export interface ContextLine {
+  lineNumber: number;
+  content: string;
+}
+
+export function getContextLines(
+  prId: number,
+  filePath: string,
+  startLine: number,
+  endLine: number,
+): Promise<{ lines: ContextLine[] }> {
+  const params = new URLSearchParams({
+    filePath,
+    startLine: String(startLine),
+    endLine: String(endLine),
+  });
+  return request(`/api/prs/${prId}/context?${params}`);
 }
 
 // ── Comments ────────────────────────────────────────────────
@@ -151,6 +188,7 @@ export function createComment(data: {
   prId: number;
   body: string;
   line: number;
+  side?: 'LEFT' | 'RIGHT';
   parentId?: number;
 }): Promise<Comment> {
   return request('/api/comments', {

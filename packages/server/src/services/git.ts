@@ -29,21 +29,41 @@ export class GitService {
   }
 
   /**
-   * Fetch the PR head ref from the remote.
-   * Uses GitHub's magic refs: `pull/<number>/head`
+   * Fetch the PR head ref from the remote and return the resolved SHA.
+   * Uses GitHub's magic refs: `pull/<number>/head`.
+   * Does NOT create a local branch — the SHA is used directly for
+   * diff, log, and file-content operations.
    *
    * @param prNumber - The PR number
    * @param remote - The git remote name (default: 'origin')
-   * @returns The local branch name created
+   * @returns The resolved commit SHA
    */
   async fetchPr(prNumber: number, remote = 'origin'): Promise<string> {
-    const localBranch = `pr-${prNumber}`;
     try {
-      await this.git('fetch', remote, `pull/${prNumber}/head:${localBranch}`, '--force');
+      await this.git('fetch', remote, `pull/${prNumber}/head`);
     } catch (err) {
       throw this.wrapFetchError(err, remote);
     }
-    return localBranch;
+    // FETCH_HEAD now points to the PR's tip commit — resolve to a full SHA
+    return this.getHeadSha('FETCH_HEAD');
+  }
+
+  /**
+   * Ensure a specific commit SHA is available locally.
+   * Fetches it from the remote if necessary.
+   *
+   * @param sha - The commit SHA to ensure is fetched
+   * @param remote - The git remote name (default: 'origin')
+   */
+  async ensureShaFetched(sha: string, remote = 'origin'): Promise<void> {
+    // Check if the SHA is already available locally
+    if (await this.refExists(sha)) return;
+    try {
+      await this.git('fetch', remote, sha);
+    } catch {
+      // Some servers don't allow fetching by SHA; this is a best-effort
+      // fallback — caller should have the SHA from a prior fetchPr()
+    }
   }
 
   /**
@@ -58,13 +78,14 @@ export class GitService {
    * Compute the diff between the PR branch and its base.
    * Uses the three-dot diff (base...head) to show only changes
    * introduced by the PR, not changes in the base branch.
+   * Enables rename detection (-M) and ignores whitespace at end of line.
    *
    * @param baseRef - The base branch ref (e.g. 'origin/main')
    * @param headRef - The PR branch ref (e.g. 'pr-7272')
    * @returns Raw unified diff string
    */
   async diff(baseRef: string, headRef: string): Promise<string> {
-    return this.git('diff', `${baseRef}...${headRef}`);
+    return this.git('diff', '-M', '--ignore-space-at-eol', `${baseRef}...${headRef}`);
   }
 
   /**
@@ -99,6 +120,27 @@ export class GitService {
   }
 
   /**
+   * Get the commit log between two refs.
+   * Returns an array of "short-hash subject" strings, oldest first.
+   *
+   * Uses the two-dot range (baseRef..headRef) which shows commits reachable
+   * from headRef but not from baseRef — i.e., only the PR's own commits.
+   * (The three-dot range would include commits on the base branch side of
+   * a symmetric difference, inflating the count.)
+   *
+   * @param baseRef - The base ref (e.g. 'origin/main')
+   * @param headRef - The head ref (e.g. 'pr-123')
+   * @returns Array of commit subject lines with short hashes
+   */
+  async getCommitLog(baseRef: string, headRef: string): Promise<string[]> {
+    const output = await this.git('log', '--format=%h %s', '--reverse', `${baseRef}..${headRef}`);
+    return output
+      .trim()
+      .split('\n')
+      .filter((line) => line.length > 0);
+  }
+
+  /**
    * Get the default branch name from the remote.
    */
   async getDefaultBranch(remote = 'origin'): Promise<string> {
@@ -116,6 +158,18 @@ export class GitService {
       }
       throw new Error('Could not determine default branch');
     }
+  }
+
+  /**
+   * Get the contents of a file at a specific revision.
+   * Uses `git show <ref>:<path>` to retrieve the file content.
+   *
+   * @param ref - The git ref (e.g. 'pr-123', a commit SHA)
+   * @param filePath - The file path relative to the repo root
+   * @returns The file content as a string
+   */
+  async getFileContent(ref: string, filePath: string): Promise<string> {
+    return this.git('show', `${ref}:${filePath}`);
   }
 
   /**

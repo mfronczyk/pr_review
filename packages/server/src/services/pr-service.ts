@@ -62,7 +62,8 @@ export class PrService {
         head_ref = @headRef,
         head_sha = @headSha,
         body = @body,
-        updated_at = datetime('now')
+        updated_at = datetime('now'),
+        synced_at = datetime('now')
     `);
 
     const prRow = {
@@ -118,7 +119,7 @@ export class PrService {
     this.db
       .prepare(
         `UPDATE prs SET title = ?, author = ?, state = ?, base_ref = ?, head_ref = ?,
-       head_sha = ?, body = ?, updated_at = datetime('now') WHERE id = ?`,
+       head_sha = ?, body = ?, updated_at = datetime('now'), synced_at = datetime('now') WHERE id = ?`,
       )
       .run(
         ghPr.title,
@@ -130,6 +131,13 @@ export class PrService {
         ghPr.body ?? '',
         prId,
       );
+
+    // Skip diff recomputation for terminal states — the diff won't change,
+    // and the git refs (pull/<N>/head) may no longer be fetchable if the
+    // source branch or fork was deleted.
+    if (state === 'merged' || state === 'closed') {
+      return { added: 0, removed: 0, updated: 0, outdated: 0 };
+    }
 
     // Recompute diff and update chunks
     const updatedPr = this.db.prepare('SELECT * FROM prs WHERE id = ?').get(prId) as PrDbRow;
@@ -149,17 +157,24 @@ export class PrService {
   }
 
   /**
-   * Fetch the PR branch via git, compute diff, parse into chunks,
+   * Fetch the PR via git, compute diff, parse into chunks,
    * and reconcile with the database.
+   * Uses the headSha already stored in the PR row — no local branches created.
    */
   private async fetchAndStoreDiff(pr: PrDbRow): Promise<SyncResult> {
-    // Fetch PR ref from remote
+    // Fetch PR ref from remote (resolves to a SHA, no local branch)
     await this.git.fetch();
-    const localBranch = await this.git.fetchPr(pr.number);
+    await this.git.fetchPr(pr.number);
 
-    // Compute diff against base
+    // Compute diff using the known head SHA from GitHub
     const baseRef = `origin/${pr.base_ref}`;
-    const rawDiff = await this.git.diff(baseRef, localBranch);
+    const rawDiff = await this.git.diff(baseRef, pr.head_sha);
+
+    // Compute commit count while we have the refs available
+    const commits = await this.git.getCommitLog(baseRef, pr.head_sha);
+    this.db
+      .prepare("UPDATE prs SET commit_count = ?, synced_at = datetime('now') WHERE id = ?")
+      .run(commits.length, pr.id);
 
     // Parse diff into chunks
     const fileDiffs = parseDiff(rawDiff);
@@ -188,6 +203,7 @@ export class PrService {
       diffText: string;
       startLine: number;
       endLine: number;
+      fileStatus?: string;
     }>,
   ): SyncResult {
     // Get existing chunks for this PR
@@ -222,7 +238,7 @@ export class PrService {
         'UPDATE chunks SET file_path = ?, chunk_index = -1 WHERE id = ?',
       );
       const updatePosition = this.db.prepare(
-        'UPDATE chunks SET file_path = ?, chunk_index = ?, start_line = ?, end_line = ? WHERE id = ?',
+        'UPDATE chunks SET file_path = ?, chunk_index = ?, start_line = ?, end_line = ?, file_status = ? WHERE id = ?',
       );
 
       // First pass: move all survivors to sentinel positions
@@ -240,17 +256,20 @@ export class PrService {
       for (const chunk of newChunks) {
         const existing = existingByHash.get(chunk.contentHash);
         if (existing) {
+          const statusChanged = existing.file_status !== (chunk.fileStatus ?? 'modified');
           if (
             existing.file_path !== chunk.filePath ||
             existing.chunk_index !== chunk.chunkIndex ||
             existing.start_line !== chunk.startLine ||
-            existing.end_line !== chunk.endLine
+            existing.end_line !== chunk.endLine ||
+            statusChanged
           ) {
             updatePosition.run(
               chunk.filePath,
               chunk.chunkIndex,
               chunk.startLine,
               chunk.endLine,
+              chunk.fileStatus ?? 'modified',
               existing.id,
             );
             updated++;
@@ -261,8 +280,8 @@ export class PrService {
 
       // 3. Insert genuinely new chunks (hash not seen before).
       const insertChunk = this.db.prepare(`
-        INSERT INTO chunks (pr_id, file_path, chunk_index, content_hash, diff_text, start_line, end_line)
-        VALUES (@prId, @filePath, @chunkIndex, @contentHash, @diffText, @startLine, @endLine)
+        INSERT INTO chunks (pr_id, file_path, chunk_index, content_hash, diff_text, start_line, end_line, file_status)
+        VALUES (@prId, @filePath, @chunkIndex, @contentHash, @diffText, @startLine, @endLine, @fileStatus)
       `);
 
       for (const chunk of newChunks) {
@@ -275,8 +294,45 @@ export class PrService {
             diffText: chunk.diffText,
             startLine: chunk.startLine,
             endLine: chunk.endLine,
+            fileStatus: chunk.fileStatus ?? 'modified',
           });
           added++;
+        }
+      }
+
+      // 4. Assign the 'unassigned' tag to any chunks that have no tags.
+      //    This ensures newly added chunks are visible in the UI's tag-based
+      //    filter/grouping, matching the same fallback used by LLM analysis.
+      if (added > 0) {
+        const untaggedChunks = this.db
+          .prepare(
+            `SELECT c.id FROM chunks c
+             WHERE c.pr_id = ?
+               AND c.id NOT IN (SELECT chunk_id FROM chunk_tags)`,
+          )
+          .all(prId) as Array<{ id: number }>;
+
+        if (untaggedChunks.length > 0) {
+          const getOrCreateTag = this.db.prepare(`
+            INSERT INTO tags (name, description, pr_id)
+            VALUES (@name, @description, @prId)
+            ON CONFLICT (name, pr_id) DO UPDATE SET description = description
+            RETURNING id
+          `);
+
+          const unassignedTag = getOrCreateTag.get({
+            name: 'unassigned',
+            description: 'Chunks not categorized by LLM analysis',
+            prId,
+          }) as { id: number };
+
+          const insertChunkTag = this.db.prepare(
+            'INSERT OR IGNORE INTO chunk_tags (chunk_id, tag_id) VALUES (?, ?)',
+          );
+
+          for (const chunk of untaggedChunks) {
+            insertChunkTag.run(chunk.id, unassignedTag.id);
+          }
         }
       }
     });
@@ -356,8 +412,10 @@ interface PrDbRow {
   head_sha: string;
   body: string;
   gh_host: string;
+  commit_count: number;
   created_at: string;
   updated_at: string;
+  synced_at: string;
 }
 
 interface ChunkDbRow {
@@ -369,6 +427,7 @@ interface ChunkDbRow {
   diff_text: string;
   start_line: number;
   end_line: number;
+  file_status: string;
   approved: number;
   approved_at: string | null;
 }
@@ -400,7 +459,9 @@ function mapPrRow(row: PrDbRow): PullRequest {
     headSha: row.head_sha,
     body: row.body,
     ghHost: row.gh_host,
+    commitCount: row.commit_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    syncedAt: row.synced_at,
   };
 }

@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import * as api from '@/api';
+import { formatRelativeTime } from '@/format-time';
 import { useAsync } from '@/hooks/use-async';
 import type { PrWithProgress } from '@pr-review/shared';
 
@@ -153,14 +154,32 @@ function PrRow({
               <StateBadge state={pr.state} />
             </div>
             <h3 className="mt-1 truncate text-sm font-medium text-fg-primary">{pr.title}</h3>
-            <p className="mt-1 text-xs text-fg-muted">by {pr.author}</p>
+            <div className="mt-1 flex items-center gap-3 text-xs text-fg-muted min-w-0">
+              <span className="flex-shrink-0">by {pr.author}</span>
+              <span
+                className="truncate text-fg-tertiary"
+                title={`${pr.headRef} \u2192 ${pr.baseRef}`}
+              >
+                {pr.headRef} &rarr; {pr.baseRef}
+              </span>
+              {pr.commitCount > 0 && (
+                <span className="flex-shrink-0 text-fg-tertiary">
+                  {pr.commitCount} commit{pr.commitCount !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <span className="text-xs font-mono">
-              <span className="text-green-600 dark:text-green-400">+{pr.additions}</span>{' '}
-              <span className="text-red-600 dark:text-red-400">-{pr.deletions}</span>
+          <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-mono">
+                <span className="text-green-600 dark:text-green-400">+{pr.additions}</span>{' '}
+                <span className="text-red-600 dark:text-red-400">-{pr.deletions}</span>
+              </span>
+              <ProgressBar approved={pr.approvedChunks} total={pr.totalChunks} />
+            </div>
+            <span className="text-[10px] text-fg-tertiary" title={`Last synced: ${pr.syncedAt}`}>
+              Synced {formatRelativeTime(pr.syncedAt)}
             </span>
-            <ProgressBar approved={pr.approvedChunks} total={pr.totalChunks} />
           </div>
         </div>
       </Link>
