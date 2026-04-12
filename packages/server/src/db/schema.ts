@@ -60,6 +60,8 @@ function createTables(db: Database.Database): void {
       diff_text     TEXT NOT NULL,
       start_line    INTEGER NOT NULL DEFAULT 0,
       end_line      INTEGER NOT NULL DEFAULT 0,
+      old_start_line INTEGER NOT NULL DEFAULT 0,
+      old_end_line  INTEGER NOT NULL DEFAULT 0,
       file_status   TEXT NOT NULL DEFAULT 'modified',
       UNIQUE(pr_id, file_path, chunk_index)
     );
@@ -169,5 +171,11 @@ function runMigrations(db: Database.Database): void {
   const chunkCols = db.pragma('table_info(chunks)') as Array<{ name: string }>;
   if (!chunkCols.some((c) => c.name === 'file_status')) {
     db.exec("ALTER TABLE chunks ADD COLUMN file_status TEXT NOT NULL DEFAULT 'modified'");
+  }
+
+  // Migration: add old_start_line and old_end_line columns to chunks table
+  if (!chunkCols.some((c) => c.name === 'old_start_line')) {
+    db.exec('ALTER TABLE chunks ADD COLUMN old_start_line INTEGER NOT NULL DEFAULT 0');
+    db.exec('ALTER TABLE chunks ADD COLUMN old_end_line INTEGER NOT NULL DEFAULT 0');
   }
 }

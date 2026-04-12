@@ -203,6 +203,8 @@ export class PrService {
       diffText: string;
       startLine: number;
       endLine: number;
+      oldStartLine?: number;
+      oldEndLine?: number;
       fileStatus?: string;
     }>,
   ): SyncResult {
@@ -233,8 +235,8 @@ export class PrService {
 
       // 2. Insert all new chunks
       const insertChunk = this.db.prepare(`
-        INSERT INTO chunks (pr_id, file_path, chunk_index, content_hash, diff_text, start_line, end_line, file_status)
-        VALUES (@prId, @filePath, @chunkIndex, @contentHash, @diffText, @startLine, @endLine, @fileStatus)
+        INSERT INTO chunks (pr_id, file_path, chunk_index, content_hash, diff_text, start_line, end_line, old_start_line, old_end_line, file_status)
+        VALUES (@prId, @filePath, @chunkIndex, @contentHash, @diffText, @startLine, @endLine, @oldStartLine, @oldEndLine, @fileStatus)
       `);
 
       for (const chunk of newChunks) {
@@ -246,6 +248,8 @@ export class PrService {
           diffText: chunk.diffText,
           startLine: chunk.startLine,
           endLine: chunk.endLine,
+          oldStartLine: chunk.oldStartLine ?? 0,
+          oldEndLine: chunk.oldEndLine ?? 0,
           fileStatus: chunk.fileStatus ?? 'modified',
         });
       }

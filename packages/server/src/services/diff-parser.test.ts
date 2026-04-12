@@ -142,10 +142,14 @@ describe('parseDiff', () => {
       // First hunk: @@ -10,6 +10,7 @@
       expect(result[0].chunks[0].startLine).toBe(10);
       expect(result[0].chunks[0].endLine).toBe(16);
+      expect(result[0].chunks[0].oldStartLine).toBe(10);
+      expect(result[0].chunks[0].oldEndLine).toBe(15);
 
       // Second hunk: @@ -45,7 +46,7 @@
       expect(result[0].chunks[1].startLine).toBe(46);
       expect(result[0].chunks[1].endLine).toBe(52);
+      expect(result[0].chunks[1].oldStartLine).toBe(45);
+      expect(result[0].chunks[1].oldEndLine).toBe(51);
     });
 
     it('should include hunk header in diff text', () => {

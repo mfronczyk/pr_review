@@ -41,6 +41,8 @@ export interface Chunk {
   diffText: string;
   startLine: number;
   endLine: number;
+  oldStartLine: number;
+  oldEndLine: number;
   fileStatus: FileStatus;
 }
 

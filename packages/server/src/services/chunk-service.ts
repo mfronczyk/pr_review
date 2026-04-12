@@ -338,6 +338,8 @@ interface ChunkDbRow {
   diff_text: string;
   start_line: number;
   end_line: number;
+  old_start_line: number;
+  old_end_line: number;
   file_status: string;
 }
 
@@ -391,6 +393,8 @@ function mapChunkRow(row: ChunkDbRow): Chunk {
     diffText: row.diff_text,
     startLine: row.start_line,
     endLine: row.end_line,
+    oldStartLine: row.old_start_line,
+    oldEndLine: row.old_end_line,
     fileStatus: row.file_status as FileStatus,
   };
 }

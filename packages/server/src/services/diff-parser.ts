@@ -11,6 +11,8 @@ export interface ParsedChunk {
   contentHash: string;
   startLine: number;
   endLine: number;
+  oldStartLine: number;
+  oldEndLine: number;
   fileStatus: 'added' | 'modified' | 'deleted' | 'renamed';
 }
 
@@ -47,6 +49,8 @@ export function parseDiff(diffText: string): ParsedFileDiff[] {
   let currentHunkLines: string[] = [];
   let currentHunkStart = 0;
   let currentHunkEnd = 0;
+  let currentOldHunkStart = 0;
+  let currentOldHunkEnd = 0;
   let chunkIndex = 0;
 
   function flushHunk(): void {
@@ -59,6 +63,8 @@ export function parseDiff(diffText: string): ParsedFileDiff[] {
         contentHash: chunkContentHash(currentFile.filePath, text),
         startLine: currentHunkStart,
         endLine: currentHunkEnd,
+        oldStartLine: currentOldHunkStart,
+        oldEndLine: currentOldHunkEnd,
         fileStatus: currentFile.status,
       });
       chunkIndex++;
@@ -122,9 +128,13 @@ export function parseDiff(diffText: string): ParsedFileDiff[] {
 
       const newStart = Number.parseInt(hunkMatch[3], 10);
       const newCount = hunkMatch[4] ? Number.parseInt(hunkMatch[4], 10) : 1;
+      const oldStart = Number.parseInt(hunkMatch[1], 10);
+      const oldCount = hunkMatch[2] ? Number.parseInt(hunkMatch[2], 10) : 1;
 
       currentHunkStart = newStart;
       currentHunkEnd = newStart + newCount - 1;
+      currentOldHunkStart = oldStart;
+      currentOldHunkEnd = oldStart + oldCount - 1;
       currentHunkLines = [line];
       continue;
     }
