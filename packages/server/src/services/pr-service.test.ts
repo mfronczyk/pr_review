@@ -1,7 +1,8 @@
 /**
- * Unit tests for PrService – verifies chunk reconciliation
- * preserves approval state, tags, metadata, and comments for unchanged chunks
- * while correctly adding/removing changed chunks, and tests review submission.
+ * Unit tests for PrService – verifies chunk reconciliation with
+ * delete-and-recreate strategy. Approval state, tags, and metadata
+ * are stored in separate tables keyed by (pr_id, content_hash),
+ * so they survive chunk row recreation automatically.
  */
 
 import * as fs from 'node:fs';
@@ -48,6 +49,11 @@ beforeAll(() => {
 beforeEach(() => {
   // Clear chunks + cascade data before each test
   db.prepare('DELETE FROM chunks WHERE pr_id = ?').run(prId);
+  // Clear hash-keyed tables too (these don't cascade with chunks)
+  db.prepare('DELETE FROM chunk_reviews WHERE pr_id = ?').run(prId);
+  db.prepare('DELETE FROM chunk_tags WHERE pr_id = ?').run(prId);
+  db.prepare('DELETE FROM chunk_metadata WHERE pr_id = ?').run(prId);
+  db.prepare('DELETE FROM tags WHERE pr_id = ?').run(prId);
 });
 
 afterAll(() => {
@@ -64,7 +70,6 @@ function getChunks(): Array<{
   content_hash: string;
   file_path: string;
   chunk_index: number;
-  approved: number;
   start_line: number;
   end_line: number;
   file_status: string;
@@ -76,17 +81,24 @@ function getChunks(): Array<{
     content_hash: string;
     file_path: string;
     chunk_index: number;
-    approved: number;
     start_line: number;
     end_line: number;
     file_status: string;
   }>;
 }
 
-function getTags(chunkId: number): Array<{ tag_id: number }> {
-  return db.prepare('SELECT * FROM chunk_tags WHERE chunk_id = ?').all(chunkId) as Array<{
-    tag_id: number;
-  }>;
+function getReview(
+  contentHash: string,
+): { approved: number; approved_at: string | null } | undefined {
+  return db
+    .prepare('SELECT * FROM chunk_reviews WHERE pr_id = ? AND content_hash = ?')
+    .get(prId, contentHash) as { approved: number; approved_at: string | null } | undefined;
+}
+
+function getTags(contentHash: string): Array<{ tag_id: number }> {
+  return db
+    .prepare('SELECT * FROM chunk_tags WHERE pr_id = ? AND content_hash = ?')
+    .all(prId, contentHash) as Array<{ tag_id: number }>;
 }
 
 function getComments(chunkId: number): Array<{ id: number; body: string }> {
@@ -97,11 +109,22 @@ function getComments(chunkId: number): Array<{ id: number; body: string }> {
 }
 
 function getMetadata(
-  chunkId: number,
+  contentHash: string,
 ): { priority: string; review_note: string | null } | undefined {
-  return db.prepare('SELECT * FROM chunk_metadata WHERE chunk_id = ?').get(chunkId) as
-    | { priority: string; review_note: string | null }
-    | undefined;
+  return db
+    .prepare('SELECT * FROM chunk_metadata WHERE pr_id = ? AND content_hash = ?')
+    .get(prId, contentHash) as { priority: string; review_note: string | null } | undefined;
+}
+
+/**
+ * Helper to approve a chunk by its content hash (via chunk_reviews table).
+ */
+function approveHash(contentHash: string): void {
+  db.prepare(
+    `INSERT INTO chunk_reviews (pr_id, content_hash, approved, approved_at)
+     VALUES (?, ?, 1, datetime('now'))
+     ON CONFLICT (pr_id, content_hash) DO UPDATE SET approved = 1, approved_at = datetime('now')`,
+  ).run(prId, contentHash);
 }
 
 const chunkA: ChunkInput = {
@@ -125,39 +148,38 @@ const chunkB: ChunkInput = {
 describe('PrService.reconcileChunks', () => {
   it('should insert all chunks on first sync', () => {
     const result = service.reconcileChunks(prId, [chunkA, chunkB]);
-    expect(result).toEqual({ added: 2, removed: 0, updated: 0, outdated: 0 });
+    expect(result).toEqual({ added: 2, removed: 0 });
 
     const chunks = getChunks();
     expect(chunks).toHaveLength(2);
     expect(chunks[0].content_hash).toBe('hashA');
     expect(chunks[1].content_hash).toBe('hashB');
-    expect(chunks[0].approved).toBe(0);
+    // No review record yet — chunks start unapproved
+    expect(getReview('hashA')).toBeUndefined();
   });
 
   it('should preserve approval state for unchanged chunks', () => {
     // Initial sync
     service.reconcileChunks(prId, [chunkA, chunkB]);
-    const chunks = getChunks();
-    // Mark chunk A as approved
-    db.prepare("UPDATE chunks SET approved = 1, approved_at = datetime('now') WHERE id = ?").run(
-      chunks[0].id,
-    );
+    // Mark chunk A as approved via chunk_reviews
+    approveHash('hashA');
 
     // Sync again with same chunks
     const result = service.reconcileChunks(prId, [chunkA, chunkB]);
-    expect(result).toEqual({ added: 0, removed: 0, updated: 0, outdated: 0 });
+    expect(result).toEqual({ added: 0, removed: 0 });
 
-    const afterSync = getChunks();
-    expect(afterSync[0].approved).toBe(1); // preserved
-    expect(afterSync[0].id).toBe(chunks[0].id); // same row
+    // Approval survives because it's stored in chunk_reviews keyed by (pr_id, content_hash)
+    const review = getReview('hashA');
+    expect(review?.approved).toBe(1);
   });
 
-  it('should preserve tags, metadata, and comments for unchanged chunks', () => {
+  it('should preserve tags, metadata for unchanged chunks (comments are dropped)', () => {
     service.reconcileChunks(prId, [chunkA]);
     const chunks = getChunks();
     const chunkId = chunks[0].id;
+    const contentHash = chunks[0].content_hash;
 
-    // Add tag
+    // Add tag (hash-keyed)
     db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
       prId,
       'test-tag',
@@ -168,16 +190,18 @@ describe('PrService.reconcileChunks', () => {
         id: number;
       }
     ).id;
-    db.prepare('INSERT INTO chunk_tags (chunk_id, tag_id) VALUES (?, ?)').run(chunkId, tagId);
-
-    // Add metadata
-    db.prepare('INSERT INTO chunk_metadata (chunk_id, priority, review_note) VALUES (?, ?, ?)').run(
-      chunkId,
-      'high',
-      'Important',
+    db.prepare('INSERT INTO chunk_tags (pr_id, content_hash, tag_id) VALUES (?, ?, ?)').run(
+      prId,
+      contentHash,
+      tagId,
     );
 
-    // Add comment
+    // Add metadata (hash-keyed)
+    db.prepare(
+      'INSERT INTO chunk_metadata (pr_id, content_hash, priority, review_note) VALUES (?, ?, ?, ?)',
+    ).run(prId, contentHash, 'high', 'Important');
+
+    // Add comment (chunk_id-keyed — will be dropped on sync)
     db.prepare('INSERT INTO comments (chunk_id, pr_id, body, line) VALUES (?, ?, ?, ?)').run(
       chunkId,
       prId,
@@ -188,17 +212,22 @@ describe('PrService.reconcileChunks', () => {
     // Sync again
     service.reconcileChunks(prId, [chunkA]);
 
-    // Chunk has 2 tags: 'unassigned' (from first sync) + 'test-tag' (manually added)
-    expect(getTags(chunkId)).toHaveLength(2);
-    const tagNames = getTags(chunkId).map((ct) => {
+    // Tags survive (hash-keyed): 'unassigned' (from first sync) + 'test-tag' (manually added)
+    const tags = getTags(contentHash);
+    expect(tags).toHaveLength(2);
+    const tagNames = tags.map((ct) => {
       const t = db.prepare('SELECT name FROM tags WHERE id = ?').get(ct.tag_id) as { name: string };
       return t.name;
     });
     expect(tagNames).toContain('test-tag');
     expect(tagNames).toContain('unassigned');
-    expect(getMetadata(chunkId)?.priority).toBe('high');
-    expect(getComments(chunkId)).toHaveLength(1);
-    expect(getComments(chunkId)[0].body).toBe('Test comment');
+
+    // Metadata survives (hash-keyed)
+    expect(getMetadata(contentHash)?.priority).toBe('high');
+
+    // Comments are dropped — chunk rows are deleted and recreated, comments CASCADE with them
+    const newChunks = getChunks();
+    expect(getComments(newChunks[0].id)).toHaveLength(0);
   });
 
   it('should delete chunks whose content hash is gone', () => {
@@ -216,10 +245,11 @@ describe('PrService.reconcileChunks', () => {
     expect(afterSync[0].content_hash).toBe('hashA');
   });
 
-  it('should cascade-delete tags, metadata, comments when chunk is removed', () => {
+  it('should clean up comments, tags, metadata, and reviews when chunk hash is removed', () => {
     service.reconcileChunks(prId, [chunkA]);
     const chunks = getChunks();
     const chunkId = chunks[0].id;
+    const contentHash = chunks[0].content_hash;
 
     // Add associated data
     db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
@@ -232,11 +262,17 @@ describe('PrService.reconcileChunks', () => {
         id: number;
       }
     ).id;
-    db.prepare('INSERT INTO chunk_tags (chunk_id, tag_id) VALUES (?, ?)').run(chunkId, tagId);
-    db.prepare('INSERT INTO chunk_metadata (chunk_id, priority) VALUES (?, ?)').run(
-      chunkId,
+    db.prepare('INSERT INTO chunk_tags (pr_id, content_hash, tag_id) VALUES (?, ?, ?)').run(
+      prId,
+      contentHash,
+      tagId,
+    );
+    db.prepare('INSERT INTO chunk_metadata (pr_id, content_hash, priority) VALUES (?, ?, ?)').run(
+      prId,
+      contentHash,
       'high',
     );
+    approveHash(contentHash);
     db.prepare('INSERT INTO comments (chunk_id, pr_id, body, line) VALUES (?, ?, ?, ?)').run(
       chunkId,
       prId,
@@ -246,9 +282,14 @@ describe('PrService.reconcileChunks', () => {
 
     // Sync with empty — removes chunkA
     service.reconcileChunks(prId, []);
-    expect(getTags(chunkId)).toHaveLength(0);
-    expect(getMetadata(chunkId)).toBeUndefined();
+
+    // Comments cascade-delete with chunk rows
     expect(getComments(chunkId)).toHaveLength(0);
+
+    // Tags, metadata, and reviews are cleaned up by orphan cleanup
+    expect(getTags(contentHash)).toHaveLength(0);
+    expect(getMetadata(contentHash)).toBeUndefined();
+    expect(getReview(contentHash)).toBeUndefined();
   });
 
   it('should add new chunks when content hash is new', () => {
@@ -269,18 +310,15 @@ describe('PrService.reconcileChunks', () => {
 
     const chunks = getChunks();
     expect(chunks).toHaveLength(2);
-    // New chunk should be unapproved
+    // New chunk should have no review record (unapproved)
     const newChunk = chunks.find((c) => c.content_hash === 'hashC');
     expect(newChunk).toBeDefined();
-    expect(newChunk?.approved).toBe(0);
+    expect(getReview('hashC')).toBeUndefined();
   });
 
   it('should handle content change at same position: old deleted, new inserted', () => {
     service.reconcileChunks(prId, [chunkA]);
-    const chunks = getChunks();
-    db.prepare("UPDATE chunks SET approved = 1, approved_at = datetime('now') WHERE id = ?").run(
-      chunks[0].id,
-    );
+    approveHash('hashA');
 
     // Same position, different content hash
     const chunkAModified: ChunkInput = {
@@ -299,16 +337,15 @@ describe('PrService.reconcileChunks', () => {
     const afterSync = getChunks();
     expect(afterSync).toHaveLength(1);
     expect(afterSync[0].content_hash).toBe('hashA_v2');
-    expect(afterSync[0].approved).toBe(0); // fresh, not approved
+    // New hash has no review record — not approved
+    expect(getReview('hashA_v2')).toBeUndefined();
+    // Old hash's approval is cleaned up by orphan cleanup
+    expect(getReview('hashA')).toBeUndefined();
   });
 
-  it('should update position when chunk moves but content stays the same', () => {
+  it('should recreate chunks with new positions when content stays the same', () => {
     service.reconcileChunks(prId, [chunkA]);
-    const chunks = getChunks();
-    const originalId = chunks[0].id;
-    db.prepare("UPDATE chunks SET approved = 1, approved_at = datetime('now') WHERE id = ?").run(
-      originalId,
-    );
+    approveHash('hashA');
 
     // Same hash, different position
     const chunkAMoved: ChunkInput = {
@@ -320,30 +357,24 @@ describe('PrService.reconcileChunks', () => {
     };
 
     const result = service.reconcileChunks(prId, [chunkAMoved]);
-    expect(result.updated).toBe(1);
+    // Delete-and-recreate: hash is same so added=0, removed=0
     expect(result.added).toBe(0);
     expect(result.removed).toBe(0);
 
     const afterSync = getChunks();
     expect(afterSync).toHaveLength(1);
-    expect(afterSync[0].id).toBe(originalId); // same DB row
-    expect(afterSync[0].approved).toBe(1); // approval preserved
+    // Approval survives (hash-keyed)
+    expect(getReview('hashA')?.approved).toBe(1);
+    // New position is reflected in the recreated row
     expect(afterSync[0].file_path).toBe('src/moved.ts');
     expect(afterSync[0].chunk_index).toBe(2);
     expect(afterSync[0].start_line).toBe(20);
   });
 
-  it('should handle mix of added, removed, preserved, and moved chunks', () => {
+  it('should handle mix of added, removed, and preserved chunks', () => {
     service.reconcileChunks(prId, [chunkA, chunkB]);
-    const chunks = getChunks();
-    // Review both
-    for (const c of chunks) {
-      db.prepare("UPDATE chunks SET approved = 1, approved_at = datetime('now') WHERE id = ?").run(
-        c.id,
-      );
-    }
-    const idA = chunks.find((c) => c.content_hash === 'hashA')?.id;
-    const idB = chunks.find((c) => c.content_hash === 'hashB')?.id;
+    approveHash('hashA');
+    approveHash('hashB');
 
     // chunkA stays, chunkB removed, chunkC added
     const chunkC: ChunkInput = {
@@ -358,21 +389,206 @@ describe('PrService.reconcileChunks', () => {
     const result = service.reconcileChunks(prId, [chunkA, chunkC]);
     expect(result.added).toBe(1);
     expect(result.removed).toBe(1);
-    expect(result.updated).toBe(0);
 
     const afterSync = getChunks();
     expect(afterSync).toHaveLength(2);
 
-    const survivorA = afterSync.find((c) => c.content_hash === 'hashA');
-    expect(survivorA?.id).toBe(idA);
-    expect(survivorA?.approved).toBe(1);
+    // hashA's approval survives
+    expect(getReview('hashA')?.approved).toBe(1);
 
-    const newC = afterSync.find((c) => c.content_hash === 'hashC');
-    expect(newC?.approved).toBe(0);
+    // hashC has no approval
+    expect(getReview('hashC')).toBeUndefined();
 
-    // Confirm B is gone
-    const bExists = db.prepare('SELECT id FROM chunks WHERE id = ?').get(idB);
+    // Confirm B is gone from chunks table
+    const bExists = db
+      .prepare('SELECT id FROM chunks WHERE pr_id = ? AND content_hash = ?')
+      .get(prId, 'hashB');
     expect(bExists).toBeUndefined();
+  });
+
+  it('should update diff_text when line numbers shift but hash is the same', () => {
+    service.reconcileChunks(prId, [chunkA]);
+    approveHash('hashA');
+
+    // Same hash, updated diff text (simulates line number shift in @@ header)
+    const chunkAShifted: ChunkInput = {
+      ...chunkA,
+      diffText: '+added line (shifted)',
+      startLine: 20,
+      endLine: 25,
+    };
+
+    const result = service.reconcileChunks(prId, [chunkAShifted]);
+    // added=0, removed=0 because hash is the same
+    expect(result.added).toBe(0);
+    expect(result.removed).toBe(0);
+
+    const afterSync = getChunks();
+    // Approval preserved (hash-keyed)
+    expect(getReview('hashA')?.approved).toBe(1);
+    // diff_text is updated via recreated row
+    const row = db.prepare('SELECT diff_text FROM chunks WHERE id = ?').get(afterSync[0].id) as {
+      diff_text: string;
+    };
+    expect(row.diff_text).toBe('+added line (shifted)');
+  });
+});
+
+describe('PrService.reconcileChunks – duplicate hashes', () => {
+  it('should handle two chunks with the same hash in initial sync', () => {
+    const dup1: ChunkInput = {
+      filePath: 'src/a.ts',
+      chunkIndex: 0,
+      contentHash: 'hashDup',
+      diffText: '+import os',
+      startLine: 1,
+      endLine: 1,
+    };
+    const dup2: ChunkInput = {
+      filePath: 'src/b.ts',
+      chunkIndex: 0,
+      contentHash: 'hashDup',
+      diffText: '+import os',
+      startLine: 1,
+      endLine: 1,
+    };
+
+    const result = service.reconcileChunks(prId, [dup1, dup2]);
+    // Hash set comparison: only 1 unique hash is "added"
+    expect(result.added).toBe(1);
+
+    const chunks = getChunks();
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].content_hash).toBe('hashDup');
+    expect(chunks[1].content_hash).toBe('hashDup');
+  });
+
+  it('should preserve approval for duplicate-hash chunks on re-sync', () => {
+    const dup1: ChunkInput = {
+      filePath: 'src/a.ts',
+      chunkIndex: 0,
+      contentHash: 'hashDup',
+      diffText: '+import os',
+      startLine: 1,
+      endLine: 1,
+    };
+    const dup2: ChunkInput = {
+      filePath: 'src/b.ts',
+      chunkIndex: 0,
+      contentHash: 'hashDup',
+      diffText: '+import os',
+      startLine: 1,
+      endLine: 1,
+    };
+
+    service.reconcileChunks(prId, [dup1, dup2]);
+    // Approve the hash (shared by both chunks)
+    approveHash('hashDup');
+
+    // Re-sync with same chunks
+    const result = service.reconcileChunks(prId, [dup1, dup2]);
+    expect(result.added).toBe(0);
+    expect(result.removed).toBe(0);
+
+    const afterSync = getChunks();
+    expect(afterSync).toHaveLength(2);
+    // Both share the same hash, so both are approved via chunk_reviews
+    expect(getReview('hashDup')?.approved).toBe(1);
+  });
+
+  it('should delete excess duplicates when count decreases', () => {
+    const dup1: ChunkInput = {
+      filePath: 'src/a.ts',
+      chunkIndex: 0,
+      contentHash: 'hashDup',
+      diffText: '+import os',
+      startLine: 1,
+      endLine: 1,
+    };
+    const dup2: ChunkInput = {
+      filePath: 'src/b.ts',
+      chunkIndex: 0,
+      contentHash: 'hashDup',
+      diffText: '+import os',
+      startLine: 1,
+      endLine: 1,
+    };
+
+    service.reconcileChunks(prId, [dup1, dup2]);
+    approveHash('hashDup');
+
+    // Re-sync with only one occurrence
+    const result = service.reconcileChunks(prId, [dup1]);
+    // Hash is still present, so added=0, removed=0 (hash set comparison)
+    expect(result.removed).toBe(0);
+    expect(result.added).toBe(0);
+
+    const afterSync = getChunks();
+    expect(afterSync).toHaveLength(1);
+    // Approval survives (hash-keyed)
+    expect(getReview('hashDup')?.approved).toBe(1);
+  });
+
+  it('should add new duplicate when count increases', () => {
+    const dup1: ChunkInput = {
+      filePath: 'src/a.ts',
+      chunkIndex: 0,
+      contentHash: 'hashDup',
+      diffText: '+import os',
+      startLine: 1,
+      endLine: 1,
+    };
+
+    service.reconcileChunks(prId, [dup1]);
+    approveHash('hashDup');
+
+    // Re-sync with two occurrences of the same hash
+    const dup2: ChunkInput = {
+      filePath: 'src/b.ts',
+      chunkIndex: 0,
+      contentHash: 'hashDup',
+      diffText: '+import os',
+      startLine: 1,
+      endLine: 1,
+    };
+
+    const result = service.reconcileChunks(prId, [dup1, dup2]);
+    // Hash already existed, so added=0, removed=0
+    expect(result.added).toBe(0);
+    expect(result.removed).toBe(0);
+
+    const afterSync = getChunks();
+    expect(afterSync).toHaveLength(2);
+    // Both share the same approval (hash-keyed)
+    expect(getReview('hashDup')?.approved).toBe(1);
+  });
+
+  it('should handle all duplicates being removed', () => {
+    const dup1: ChunkInput = {
+      filePath: 'src/a.ts',
+      chunkIndex: 0,
+      contentHash: 'hashDup',
+      diffText: '+import os',
+      startLine: 1,
+      endLine: 1,
+    };
+    const dup2: ChunkInput = {
+      filePath: 'src/b.ts',
+      chunkIndex: 0,
+      contentHash: 'hashDup',
+      diffText: '+import os',
+      startLine: 1,
+      endLine: 1,
+    };
+
+    service.reconcileChunks(prId, [dup1, dup2]);
+    expect(getChunks()).toHaveLength(2);
+
+    // Re-sync with no chunks
+    const result = service.reconcileChunks(prId, []);
+    expect(result.removed).toBe(1); // one unique hash removed
+
+    expect(getChunks()).toHaveLength(0);
   });
 });
 
@@ -406,7 +622,7 @@ describe('PrService.reconcileChunks – file_status', () => {
     service.reconcileChunks(prId, [{ ...chunkA, fileStatus: 'renamed' }]);
     const after = getChunks();
     expect(after[0].file_status).toBe('renamed');
-    expect(after[0].id).toBe(before[0].id); // same row
+    // Chunk ID changes (delete-and-recreate), but that's expected
   });
 
   it('should store different statuses for different files', () => {
@@ -430,9 +646,9 @@ describe('PrService.reconcileChunks – unassigned tag', () => {
     const chunks = getChunks();
     expect(chunks).toHaveLength(2);
 
-    // Both chunks should have the 'unassigned' tag
+    // Both chunks should have the 'unassigned' tag (via content_hash)
     for (const chunk of chunks) {
-      const tags = getTags(chunk.id);
+      const tags = getTags(chunk.content_hash);
       expect(tags).toHaveLength(1);
 
       const tagRow = db.prepare('SELECT * FROM tags WHERE id = ?').get(tags[0].tag_id) as {
@@ -449,9 +665,13 @@ describe('PrService.reconcileChunks – unassigned tag', () => {
     service.reconcileChunks(prId, [chunkA]);
     const chunksAfterFirst = getChunks();
     expect(chunksAfterFirst).toHaveLength(1);
+    const contentHashA = chunksAfterFirst[0].content_hash;
 
     // Manually assign a real tag to chunkA (simulate LLM analysis)
-    db.prepare('DELETE FROM chunk_tags WHERE chunk_id = ?').run(chunksAfterFirst[0].id);
+    db.prepare('DELETE FROM chunk_tags WHERE pr_id = ? AND content_hash = ?').run(
+      prId,
+      contentHashA,
+    );
     db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
       prId,
       'real-tag',
@@ -462,12 +682,13 @@ describe('PrService.reconcileChunks – unassigned tag', () => {
         id: number;
       }
     ).id;
-    db.prepare('INSERT INTO chunk_tags (chunk_id, tag_id) VALUES (?, ?)').run(
-      chunksAfterFirst[0].id,
+    db.prepare('INSERT INTO chunk_tags (pr_id, content_hash, tag_id) VALUES (?, ?, ?)').run(
+      prId,
+      contentHashA,
       realTagId,
     );
 
-    // Sync again adding chunkB
+    // Sync again adding chunkC
     const chunkC: ChunkInput = {
       filePath: 'src/c.ts',
       chunkIndex: 0,
@@ -482,16 +703,12 @@ describe('PrService.reconcileChunks – unassigned tag', () => {
     expect(chunksAfterSecond).toHaveLength(2);
 
     // chunkA should still have only its real tag (not unassigned)
-    const chunkARow = chunksAfterSecond.find((c) => c.content_hash === 'hashA');
-    expect(chunkARow).toBeDefined();
-    const chunkATags = getTags(chunkARow!.id);
+    const chunkATags = getTags(contentHashA);
     expect(chunkATags).toHaveLength(1);
     expect(chunkATags[0].tag_id).toBe(realTagId);
 
     // chunkC should have the 'unassigned' tag
-    const chunkCRow = chunksAfterSecond.find((c) => c.content_hash === 'hashC');
-    expect(chunkCRow).toBeDefined();
-    const chunkCTags = getTags(chunkCRow!.id);
+    const chunkCTags = getTags('hashC');
     expect(chunkCTags).toHaveLength(1);
     const unassignedTag = db
       .prepare('SELECT * FROM tags WHERE id = ?')
@@ -508,8 +725,7 @@ describe('PrService.reconcileChunks – unassigned tag', () => {
     // Sync again with same chunks — no new additions
     service.reconcileChunks(prId, [chunkA]);
 
-    const chunks = getChunks();
-    const tags = getTags(chunks[0].id);
+    const tags = getTags('hashA');
     // Should still have exactly 1 unassigned tag, not 2
     expect(tags).toHaveLength(1);
   });

@@ -61,9 +61,15 @@ function createTables(db: Database.Database): void {
       start_line    INTEGER NOT NULL DEFAULT 0,
       end_line      INTEGER NOT NULL DEFAULT 0,
       file_status   TEXT NOT NULL DEFAULT 'modified',
+      UNIQUE(pr_id, file_path, chunk_index)
+    );
+
+    CREATE TABLE IF NOT EXISTS chunk_reviews (
+      pr_id         INTEGER NOT NULL REFERENCES prs(id) ON DELETE CASCADE,
+      content_hash  TEXT NOT NULL,
       approved      INTEGER NOT NULL DEFAULT 0,
       approved_at   TEXT,
-      UNIQUE(pr_id, file_path, chunk_index)
+      PRIMARY KEY (pr_id, content_hash)
     );
 
     CREATE TABLE IF NOT EXISTS tags (
@@ -75,16 +81,19 @@ function createTables(db: Database.Database): void {
     );
 
     CREATE TABLE IF NOT EXISTS chunk_tags (
-      chunk_id      INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+      pr_id         INTEGER NOT NULL REFERENCES prs(id) ON DELETE CASCADE,
+      content_hash  TEXT NOT NULL,
       tag_id        INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-      PRIMARY KEY (chunk_id, tag_id)
+      PRIMARY KEY (pr_id, content_hash, tag_id)
     );
 
     CREATE TABLE IF NOT EXISTS chunk_metadata (
-      chunk_id      INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+      pr_id         INTEGER NOT NULL REFERENCES prs(id) ON DELETE CASCADE,
+      content_hash  TEXT NOT NULL,
       priority      TEXT NOT NULL DEFAULT 'medium',
       review_note   TEXT,
-      llm_run_id    INTEGER REFERENCES llm_runs(id) ON DELETE SET NULL
+      llm_run_id    INTEGER REFERENCES llm_runs(id) ON DELETE SET NULL,
+      PRIMARY KEY (pr_id, content_hash)
     );
 
     CREATE TABLE IF NOT EXISTS comments (
@@ -122,7 +131,7 @@ function createTables(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_chunks_pr_id ON chunks(pr_id);
     CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash);
-    CREATE INDEX IF NOT EXISTS idx_chunk_tags_chunk_id ON chunk_tags(chunk_id);
+    CREATE INDEX IF NOT EXISTS idx_chunk_tags_pr_hash ON chunk_tags(pr_id, content_hash);
     CREATE INDEX IF NOT EXISTS idx_chunk_tags_tag_id ON chunk_tags(tag_id);
     CREATE INDEX IF NOT EXISTS idx_tags_pr_id ON tags(pr_id);
     CREATE INDEX IF NOT EXISTS idx_comments_chunk_id ON comments(chunk_id);

@@ -1,4 +1,4 @@
-import { contentHash } from './content-hash.js';
+import { chunkContentHash } from './content-hash.js';
 
 /**
  * A parsed chunk from a unified diff.
@@ -56,7 +56,7 @@ export function parseDiff(diffText: string): ParsedFileDiff[] {
         filePath: currentFile.filePath,
         chunkIndex,
         diffText: text,
-        contentHash: contentHash(text),
+        contentHash: chunkContentHash(currentFile.filePath, text),
         startLine: currentHunkStart,
         endLine: currentHunkEnd,
         fileStatus: currentFile.status,
