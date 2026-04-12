@@ -1,9 +1,9 @@
+import type { DatabaseSync } from 'node:sqlite';
 import type { LlmChunkAssignment, LlmTagDefinition, Priority } from '@pr-review/shared';
-import type Database from 'better-sqlite3';
 import type { ParsedFileDiff } from './diff-parser.js';
 
 export interface LlmAnalyzerOptions {
-  db: Database.Database;
+  db: DatabaseSync;
   repoPath: string;
 }
 
@@ -220,7 +220,7 @@ export function validatePriority(p: string): Priority {
 }
 
 export function storeChunkMetadata(
-  db: Database.Database,
+  db: DatabaseSync,
   prId: number,
   llmRunId: number,
   assignments: LlmChunkAssignment[],
@@ -258,65 +258,73 @@ export function storeChunkMetadata(
     tagDescriptions.set(td.name, td.description);
   }
 
-  const store = db.transaction(() => {
-    for (const assignment of assignments) {
-      const chunk = getChunk.get(prId, assignment.filePath, assignment.chunkIndex) as
-        | { id: number; content_hash: string }
-        | undefined;
+  const store = (): void => {
+    db.exec('BEGIN');
+    try {
+      for (const assignment of assignments) {
+        const chunk = getChunk.get(prId, assignment.filePath, assignment.chunkIndex) as
+          | { id: number; content_hash: string }
+          | undefined;
 
-      if (!chunk) continue;
+        if (!chunk) continue;
 
-      // Upsert metadata keyed by (pr_id, content_hash)
-      upsertMetadata.run({
-        prId,
-        contentHash: chunk.content_hash,
-        priority: assignment.priority,
-        reviewNote: assignment.reviewNote,
-        llmRunId,
-      });
+        // Upsert metadata keyed by (pr_id, content_hash)
+        upsertMetadata.run({
+          prId,
+          contentHash: chunk.content_hash,
+          priority: assignment.priority,
+          reviewNote: assignment.reviewNote,
+          llmRunId,
+        });
 
-      // Clear existing tags and re-assign (keyed by pr_id, content_hash)
-      clearChunkTags.run(prId, chunk.content_hash);
+        // Clear existing tags and re-assign (keyed by pr_id, content_hash)
+        clearChunkTags.run(prId, chunk.content_hash);
 
-      for (const tagName of assignment.tags) {
-        const tag = getOrCreateTag.get({
-          name: tagName,
-          description: tagDescriptions.get(tagName) ?? '',
+        for (const tagName of assignment.tags) {
+          const tag = getOrCreateTag.get({
+            name: tagName,
+            description: tagDescriptions.get(tagName) ?? '',
+            prId,
+          }) as { id: number };
+
+          insertChunkTag.run(prId, chunk.content_hash, tag.id);
+        }
+      }
+
+      // Assign 'unassigned' tag to any chunks that have no tags
+      const untaggedChunks = db
+        .prepare(
+          `SELECT c.id, c.content_hash FROM chunks c
+           WHERE c.pr_id = ?
+             AND NOT EXISTS (
+               SELECT 1 FROM chunk_tags ct
+               WHERE ct.pr_id = c.pr_id AND ct.content_hash = c.content_hash
+             )`,
+        )
+        .all(prId) as Array<{ id: number; content_hash: string }>;
+
+      if (untaggedChunks.length > 0) {
+        const unassignedTag = getOrCreateTag.get({
+          name: 'unassigned',
+          description: 'Chunks not categorized by LLM analysis',
           prId,
         }) as { id: number };
 
-        insertChunkTag.run(prId, chunk.content_hash, tag.id);
-      }
-    }
+        for (const chunk of untaggedChunks) {
+          insertChunkTag.run(prId, chunk.content_hash, unassignedTag.id);
+        }
 
-    // Assign 'unassigned' tag to any chunks that have no tags
-    const untaggedChunks = db
-      .prepare(
-        `SELECT c.id, c.content_hash FROM chunks c
-         WHERE c.pr_id = ?
-           AND NOT EXISTS (
-             SELECT 1 FROM chunk_tags ct
-             WHERE ct.pr_id = c.pr_id AND ct.content_hash = c.content_hash
-           )`,
-      )
-      .all(prId) as Array<{ id: number; content_hash: string }>;
-
-    if (untaggedChunks.length > 0) {
-      const unassignedTag = getOrCreateTag.get({
-        name: 'unassigned',
-        description: 'Chunks not categorized by LLM analysis',
-        prId,
-      }) as { id: number };
-
-      for (const chunk of untaggedChunks) {
-        insertChunkTag.run(prId, chunk.content_hash, unassignedTag.id);
+        console.log(
+          `[analyze] Assigned 'unassigned' tag to ${untaggedChunks.length} chunks without tags`,
+        );
       }
 
-      console.log(
-        `[analyze] Assigned 'unassigned' tag to ${untaggedChunks.length} chunks without tags`,
-      );
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
     }
-  });
+  };
 
   store();
 }

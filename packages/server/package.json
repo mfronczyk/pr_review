@@ -12,11 +12,9 @@
   "dependencies": {
     "@octokit/rest": "^21.0.0",
     "@pr-review/shared": "*",
-    "better-sqlite3": "^11.0.0",
     "express": "^5.1.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.0",
     "@types/express": "^5.0.0",
     "@types/supertest": "^7.2.0",
     "supertest": "^7.2.2",

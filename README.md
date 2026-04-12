@@ -1,7 +1,7 @@
 # pr-review
 
 [![standard-readme compliant](https://img.shields.io/badge/readme%20style-standard-brightgreen.svg?style=flat-square)](https://github.com/RichardLitt/standard-readme)
-[![node](https://img.shields.io/badge/node-%3E=22.0.0-green.svg)](https://nodejs.org/)
+[![node](https://img.shields.io/badge/node-%3E=24.9.0-green.svg)](https://nodejs.org/)
 <!-- Add build, coverage, and npm badges here when available -->
 
 > Monorepo for PR Review platform — a modern, best-practices TypeScript/Node.js web application, featuring client, server, and shared workspaces with robust tooling for development and code review automation.
@@ -28,6 +28,7 @@ A sample PR Review session in the app:
     - [Lint \& Format](#lint--format)
     - [Testing](#testing)
   - [Development Usage](#development-usage)
+  - [Production Deployment](#production-deployment)
   - [Key Features](#key-features)
   - [Server Configuration \& Integrations](#server-configuration--integrations)
     - [1. Point to a Repository](#1-point-to-a-repository)
@@ -53,7 +54,9 @@ pr-review/
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) >=22.0.0
+- [Node.js](https://nodejs.org/) >=24.9.0
+
+No native dependencies or C++ build tools are required. The server uses Node.js's built-in `node:sqlite` module (`DatabaseSync`) for data storage, so SQLite is available out of the box — no compilation step, no platform-specific binaries, and no extra flags needed.
 
 ## Installation
 
@@ -118,10 +121,34 @@ npm run test:ui        # Interactive mode (Vitest UI)
 ## Development Usage
 
 - *Client*: Modern React (18+), Vite, TailwindCSS, React Router, TanStack React Virtual
-- *Server*: Express, TS, better-sqlite3, Octokit
+- *Server*: Express, TS, node:sqlite (DatabaseSync), Octokit
 - *Shared*: Common types/modules reused on client and server
 
 All apps follow strict TypeScript, formatting and style guidelines (see [AGENTS.md](./AGENTS.md) for further details).
+
+## Production Deployment
+
+The server has no native dependencies — only pure JavaScript packages — so it runs on any platform with Node.js >=24.9.0 without build tools.
+
+```bash
+# Install production dependencies only (skips test/dev tooling)
+npm install --omit=dev
+
+# Build all packages
+npm run build
+
+# Start the server
+REPO_PATH=/path/to/your/repo node packages/server/dist/index.js
+```
+
+The production dependency footprint for the server is minimal:
+
+| Package | Purpose |
+|---|---|
+| `express` | HTTP server |
+| `@octokit/rest` | GitHub API client |
+| `@pr-review/shared` | Shared types (workspace package) |
+| *(built-in)* `node:sqlite` | SQLite database via `DatabaseSync` |
 
 ## Key Features
 

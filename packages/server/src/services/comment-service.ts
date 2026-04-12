@@ -1,9 +1,9 @@
+import type { DatabaseSync } from 'node:sqlite';
 import type { Comment, DiffSide } from '@pr-review/shared';
-import type Database from 'better-sqlite3';
 import { getOctokit } from './github-client.js';
 
 export interface CommentServiceOptions {
-  db: Database.Database;
+  db: DatabaseSync;
 }
 
 /**
@@ -14,7 +14,7 @@ export interface CommentServiceOptions {
  * A thread is a root comment (parentId = null) plus flat replies (parentId = root.id).
  */
 export class CommentService {
-  private readonly db: Database.Database;
+  private readonly db: DatabaseSync;
 
   constructor(options: CommentServiceOptions) {
     this.db = options.db;
@@ -53,7 +53,7 @@ export class CommentService {
        VALUES (?, ?, ?, ?, ?, ?)
        RETURNING *`,
       )
-      .get(chunkId, prId, body, line, side, parentId ?? null) as CommentDbRow;
+      .get(chunkId, prId, body, line, side, parentId ?? null) as unknown as CommentDbRow;
 
     return mapCommentRow(row);
   }
@@ -92,7 +92,7 @@ export class CommentService {
   getCommentsForPr(prId: number): Comment[] {
     const rows = this.db
       .prepare('SELECT * FROM comments WHERE pr_id = ? ORDER BY created_at')
-      .all(prId) as CommentDbRow[];
+      .all(prId) as unknown as CommentDbRow[];
     return rows.map(mapCommentRow);
   }
 
@@ -117,7 +117,7 @@ export class CommentService {
 
     const updated = this.db
       .prepare('SELECT * FROM comments WHERE id = ?')
-      .get(commentId) as CommentDbRow;
+      .get(commentId) as unknown as CommentDbRow;
     return mapCommentRow(updated);
   }
 
@@ -142,7 +142,7 @@ export class CommentService {
 
     const updated = this.db
       .prepare('SELECT * FROM comments WHERE id = ?')
-      .get(commentId) as CommentDbRow;
+      .get(commentId) as unknown as CommentDbRow;
     return mapCommentRow(updated);
   }
 
@@ -298,7 +298,7 @@ export class CommentService {
 
     const updated = this.db
       .prepare('SELECT * FROM comments WHERE id = ?')
-      .get(commentId) as CommentDbRow;
+      .get(commentId) as unknown as CommentDbRow;
     return mapCommentRow(updated);
   }
 
@@ -433,7 +433,7 @@ export class CommentService {
           ghComment.node_id,
           ghComment.created_at,
           ghComment.created_at,
-        ) as CommentDbRow;
+        ) as unknown as CommentDbRow;
 
       ghIdToLocalId.set(ghComment.id, row.id);
       existingGhIds.add(ghComment.id);

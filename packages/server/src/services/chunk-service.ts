@@ -1,3 +1,4 @@
+import type { DatabaseSync } from 'node:sqlite';
 import type {
   Chunk,
   ChunkMetadata,
@@ -8,10 +9,9 @@ import type {
   Priority,
   Tag,
 } from '@pr-review/shared';
-import type Database from 'better-sqlite3';
 
 export interface ChunkServiceOptions {
-  db: Database.Database;
+  db: DatabaseSync;
 }
 
 /**
@@ -22,7 +22,7 @@ export interface ChunkServiceOptions {
  * Chunk row IDs are ephemeral — they change every sync cycle.
  */
 export class ChunkService {
-  private readonly db: Database.Database;
+  private readonly db: DatabaseSync;
 
   constructor(options: ChunkServiceOptions) {
     this.db = options.db;
@@ -34,7 +34,7 @@ export class ChunkService {
   getChunksForPr(prId: number): ChunkWithDetails[] {
     const chunks = this.db
       .prepare('SELECT * FROM chunks WHERE pr_id = ? ORDER BY file_path, chunk_index')
-      .all(prId) as ChunkDbRow[];
+      .all(prId) as unknown as ChunkDbRow[];
 
     return chunks.map((c) => this.enrichChunk(c));
   }
@@ -150,11 +150,18 @@ export class ChunkService {
        ON CONFLICT (pr_id, content_hash) DO UPDATE SET approved = 1, approved_at = datetime('now')`,
     );
 
-    const tx = this.db.transaction(() => {
-      for (const row of hashesToApprove) {
-        upsert.run(prId, row.content_hash);
+    const tx = (): void => {
+      this.db.exec('BEGIN');
+      try {
+        for (const row of hashesToApprove) {
+          upsert.run(prId, row.content_hash);
+        }
+        this.db.exec('COMMIT');
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
       }
-    });
+    };
     tx();
 
     return hashesToApprove.length;
@@ -183,11 +190,18 @@ export class ChunkService {
        ON CONFLICT (pr_id, content_hash) DO UPDATE SET approved = 0, approved_at = NULL`,
     );
 
-    const tx = this.db.transaction(() => {
-      for (const row of hashesToUnapprove) {
-        upsert.run(prId, row.content_hash);
+    const tx = (): void => {
+      this.db.exec('BEGIN');
+      try {
+        for (const row of hashesToUnapprove) {
+          upsert.run(prId, row.content_hash);
+        }
+        this.db.exec('COMMIT');
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
       }
-    });
+    };
     tx();
 
     return hashesToUnapprove.length;
@@ -233,7 +247,7 @@ export class ChunkService {
   getTagsForPr(prId: number): Tag[] {
     const rows = this.db
       .prepare('SELECT * FROM tags WHERE pr_id = ? ORDER BY name')
-      .all(prId) as TagDbRow[];
+      .all(prId) as unknown as TagDbRow[];
     return rows.map(mapTagRow);
   }
 
@@ -276,11 +290,18 @@ export class ChunkService {
     const insert = this.db.prepare(
       'INSERT OR IGNORE INTO chunk_tags (pr_id, content_hash, tag_id) VALUES (?, ?, ?)',
     );
-    const insertAll = this.db.transaction(() => {
-      for (const tagId of tagIds) {
-        insert.run(chunk.pr_id, chunk.content_hash, tagId);
+    const insertAll = (): void => {
+      this.db.exec('BEGIN');
+      try {
+        for (const tagId of tagIds) {
+          insert.run(chunk.pr_id, chunk.content_hash, tagId);
+        }
+        this.db.exec('COMMIT');
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
       }
-    });
+    };
     insertAll();
   }
 
@@ -307,17 +328,24 @@ export class ChunkService {
       | undefined;
     if (!chunk) throw new Error(`Chunk not found: ${chunkId}`);
 
-    const tx = this.db.transaction(() => {
-      this.db
-        .prepare('DELETE FROM chunk_tags WHERE pr_id = ? AND content_hash = ?')
-        .run(chunk.pr_id, chunk.content_hash);
-      const insert = this.db.prepare(
-        'INSERT INTO chunk_tags (pr_id, content_hash, tag_id) VALUES (?, ?, ?)',
-      );
-      for (const tagId of tagIds) {
-        insert.run(chunk.pr_id, chunk.content_hash, tagId);
+    const tx = (): void => {
+      this.db.exec('BEGIN');
+      try {
+        this.db
+          .prepare('DELETE FROM chunk_tags WHERE pr_id = ? AND content_hash = ?')
+          .run(chunk.pr_id, chunk.content_hash);
+        const insert = this.db.prepare(
+          'INSERT INTO chunk_tags (pr_id, content_hash, tag_id) VALUES (?, ?, ?)',
+        );
+        for (const tagId of tagIds) {
+          insert.run(chunk.pr_id, chunk.content_hash, tagId);
+        }
+        this.db.exec('COMMIT');
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
       }
-    });
+    };
     tx();
   }
 
@@ -337,7 +365,7 @@ export class ChunkService {
          WHERE ct.pr_id = ? AND ct.content_hash = ?
          ORDER BY t.name`,
       )
-      .all(row.pr_id, row.content_hash) as TagDbRow[];
+      .all(row.pr_id, row.content_hash) as unknown as TagDbRow[];
 
     // Metadata via chunk_metadata (keyed by pr_id, content_hash)
     const metadata = this.db
@@ -347,7 +375,7 @@ export class ChunkService {
     // Comments still linked via chunk_id (ephemeral — recreated each sync)
     const comments = this.db
       .prepare('SELECT * FROM comments WHERE chunk_id = ? ORDER BY created_at')
-      .all(row.id) as CommentDbRow[];
+      .all(row.id) as unknown as CommentDbRow[];
 
     return {
       ...mapChunkRow(row),

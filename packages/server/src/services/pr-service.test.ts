@@ -8,7 +8,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { initDatabase } from '../db/schema.js';
@@ -29,7 +29,7 @@ interface ChunkInput {
   fileStatus?: string;
 }
 
-let db: Database.Database;
+let db: DatabaseSync;
 let service: PrService;
 let dbPath: string;
 const prId = 1;

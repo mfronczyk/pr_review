@@ -6,14 +6,14 @@
  * because they're stored in separate tables keyed by (pr_id, content_hash).
  */
 
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { initDatabase } from '../db/schema.js';
 import { ChunkService } from './chunk-service.js';
 import { PrService } from './pr-service.js';
 
 describe('Reconciliation – state survival across sync', () => {
-  let db: Database.Database;
+  let db: DatabaseSync;
   let prService: PrService;
   let chunkService: ChunkService;
   let prId: number;

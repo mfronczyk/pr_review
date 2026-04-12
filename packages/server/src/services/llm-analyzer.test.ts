@@ -1,4 +1,4 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import type { ParsedFileDiff } from './diff-parser.js';
 import {
@@ -292,7 +292,7 @@ describe('mapTaggingResult', () => {
 // ── storeChunkMetadata ───────────────────────────────────────
 
 async function setupTestDb(): Promise<{
-  db: BetterSqlite3.Database;
+  db: DatabaseSync;
   prId: number;
   chunkIds: number[];
 }> {

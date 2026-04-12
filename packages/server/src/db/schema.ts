@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 
 /**
  * Initialize the SQLite database with all required tables.
@@ -9,7 +9,7 @@ import Database from 'better-sqlite3';
  * @param dbPath - Path to the SQLite database file (or ':memory:' for tests).
  *                 For production use, pass `<repoPath>/.pr-review/data.db`.
  */
-export function initDatabase(dbPath: string): Database.Database {
+export function initDatabase(dbPath: string): DatabaseSync {
   const resolvedPath = dbPath;
 
   // Ensure directory exists (skip for in-memory DBs)
@@ -17,11 +17,12 @@ export function initDatabase(dbPath: string): Database.Database {
     fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
   }
 
-  const db = new Database(resolvedPath);
+  const db = new DatabaseSync(resolvedPath, {
+    enableForeignKeyConstraints: true,
+  });
 
   // Performance settings
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+  db.exec('PRAGMA journal_mode = WAL');
 
   createTables(db);
   runMigrations(db);
@@ -29,7 +30,7 @@ export function initDatabase(dbPath: string): Database.Database {
   return db;
 }
 
-function createTables(db: Database.Database): void {
+function createTables(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS prs (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,16 +139,16 @@ function createTables(db: Database.Database): void {
  * Run schema migrations for existing databases.
  * Each migration checks whether the change has already been applied.
  */
-function runMigrations(db: Database.Database): void {
+function runMigrations(db: DatabaseSync): void {
   // Migration: add gh_node_id column to comments table
-  const cols = db.pragma('table_info(comments)') as Array<{ name: string }>;
+  const cols = db.prepare('PRAGMA table_info(comments)').all() as Array<{ name: string }>;
   const hasGhNodeId = cols.some((c) => c.name === 'gh_node_id');
   if (!hasGhNodeId) {
     db.exec('ALTER TABLE comments ADD COLUMN gh_node_id TEXT');
   }
 
   // Migration: add commit_count and synced_at columns to prs table
-  const prCols = db.pragma('table_info(prs)') as Array<{ name: string }>;
+  const prCols = db.prepare('PRAGMA table_info(prs)').all() as Array<{ name: string }>;
   if (!prCols.some((c) => c.name === 'commit_count')) {
     db.exec('ALTER TABLE prs ADD COLUMN commit_count INTEGER NOT NULL DEFAULT 0');
   }
@@ -158,7 +159,7 @@ function runMigrations(db: Database.Database): void {
   }
 
   // Migration: add file_status column to chunks table
-  const chunkCols = db.pragma('table_info(chunks)') as Array<{ name: string }>;
+  const chunkCols = db.prepare('PRAGMA table_info(chunks)').all() as Array<{ name: string }>;
   if (!chunkCols.some((c) => c.name === 'file_status')) {
     db.exec("ALTER TABLE chunks ADD COLUMN file_status TEXT NOT NULL DEFAULT 'modified'");
   }
