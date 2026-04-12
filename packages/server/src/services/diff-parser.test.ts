@@ -142,10 +142,14 @@ describe('parseDiff', () => {
       // First hunk: @@ -10,6 +10,7 @@
       expect(result[0].chunks[0].startLine).toBe(10);
       expect(result[0].chunks[0].endLine).toBe(16);
+      expect(result[0].chunks[0].oldStartLine).toBe(10);
+      expect(result[0].chunks[0].oldEndLine).toBe(15);
 
       // Second hunk: @@ -45,7 +46,7 @@
       expect(result[0].chunks[1].startLine).toBe(46);
       expect(result[0].chunks[1].endLine).toBe(52);
+      expect(result[0].chunks[1].oldStartLine).toBe(45);
+      expect(result[0].chunks[1].oldEndLine).toBe(51);
     });
 
     it('should include hunk header in diff text', () => {
@@ -273,6 +277,82 @@ index abc..def 100644
       const chunks1 = parseDiff(diff1);
       const chunks2 = parseDiff(diff2);
       expect(chunks1[0].chunks[0].contentHash).not.toBe(chunks2[0].chunks[0].contentHash);
+    });
+
+    it('should produce same hash when line numbers shift but content is identical', () => {
+      // Simulates a chunk that moved from line 10 to line 25 due to additions above
+      const diffBefore = `diff --git a/src/utils.py b/src/utils.py
+index abc..def 100644
+--- a/src/utils.py
++++ b/src/utils.py
+@@ -10,6 +10,7 @@ import os
+ import sys
+ import tempfile
++from typing import Optional
+ 
+ from . import certs
+`;
+
+      const diffAfter = `diff --git a/src/utils.py b/src/utils.py
+index abc..def 100644
+--- a/src/utils.py
++++ b/src/utils.py
+@@ -25,6 +30,7 @@ import os
+ import sys
+ import tempfile
++from typing import Optional
+ 
+ from . import certs
+`;
+
+      const chunksBefore = parseDiff(diffBefore);
+      const chunksAfter = parseDiff(diffAfter);
+      expect(chunksBefore[0].chunks[0].contentHash).toBe(chunksAfter[0].chunks[0].contentHash);
+    });
+
+    it('should produce different hashes for identical content in different files', () => {
+      const diff = `diff --git a/src/a.py b/src/a.py
+index abc..def 100644
+--- a/src/a.py
++++ b/src/a.py
+@@ -1,3 +1,4 @@
+ context
++import os
+ more context
+diff --git a/src/b.py b/src/b.py
+index abc..def 100644
+--- a/src/b.py
++++ b/src/b.py
+@@ -1,3 +1,4 @@
+ context
++import os
+ more context
+`;
+
+      const result = parseDiff(diff);
+      expect(result).toHaveLength(2);
+      expect(result[0].chunks[0].contentHash).not.toBe(result[1].chunks[0].contentHash);
+    });
+
+    it('should differentiate hunks with same content but different function context', () => {
+      const diff = `diff --git a/models.py b/models.py
+index abc..def 100644
+--- a/models.py
++++ b/models.py
+@@ -10,3 +10,4 @@ class Foo:
+ context
++    self.x = 1
+ more
+@@ -50,3 +51,4 @@ class Bar:
+ context
++    self.x = 1
+ more
+`;
+
+      const result = parseDiff(diff);
+      expect(result[0].chunks).toHaveLength(2);
+      // Same content lines but different function context → different hashes
+      expect(result[0].chunks[0].contentHash).not.toBe(result[0].chunks[1].contentHash);
     });
   });
 

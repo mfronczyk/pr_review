@@ -41,12 +41,10 @@ export interface Chunk {
   diffText: string;
   startLine: number;
   endLine: number;
+  oldStartLine: number;
+  oldEndLine: number;
   fileStatus: FileStatus;
-  approved: boolean;
-  approvedAt: string | null;
 }
-
-export type ReviewState = 'unapproved' | 'approved' | 'outdated';
 
 // ── Tag ─────────────────────────────────────────────────────
 
@@ -58,7 +56,8 @@ export interface Tag {
 }
 
 export interface ChunkTag {
-  chunkId: number;
+  prId: number;
+  contentHash: string;
   tagId: number;
 }
 
@@ -67,7 +66,8 @@ export interface ChunkTag {
 export type Priority = 'high' | 'medium' | 'low';
 
 export interface ChunkMetadata {
-  chunkId: number;
+  prId: number;
+  contentHash: string;
   priority: Priority;
   reviewNote: string | null;
   llmRunId: number | null;
@@ -165,6 +165,8 @@ export interface PrWithProgress extends PullRequest {
 }
 
 export interface ChunkWithDetails extends Chunk {
+  approved: boolean;
+  approvedAt: string | null;
   tags: Tag[];
   metadata: ChunkMetadata | null;
   comments: Comment[];
@@ -173,8 +175,6 @@ export interface ChunkWithDetails extends Chunk {
 export interface SyncResult {
   added: number;
   removed: number;
-  updated: number;
-  outdated: number;
 }
 
 // ── Review Submission ──────────────────────────────────────

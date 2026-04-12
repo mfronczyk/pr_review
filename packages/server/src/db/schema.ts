@@ -60,10 +60,18 @@ function createTables(db: Database.Database): void {
       diff_text     TEXT NOT NULL,
       start_line    INTEGER NOT NULL DEFAULT 0,
       end_line      INTEGER NOT NULL DEFAULT 0,
+      old_start_line INTEGER NOT NULL DEFAULT 0,
+      old_end_line  INTEGER NOT NULL DEFAULT 0,
       file_status   TEXT NOT NULL DEFAULT 'modified',
+      UNIQUE(pr_id, file_path, chunk_index)
+    );
+
+    CREATE TABLE IF NOT EXISTS chunk_reviews (
+      pr_id         INTEGER NOT NULL REFERENCES prs(id) ON DELETE CASCADE,
+      content_hash  TEXT NOT NULL,
       approved      INTEGER NOT NULL DEFAULT 0,
       approved_at   TEXT,
-      UNIQUE(pr_id, file_path, chunk_index)
+      PRIMARY KEY (pr_id, content_hash)
     );
 
     CREATE TABLE IF NOT EXISTS tags (
@@ -75,16 +83,19 @@ function createTables(db: Database.Database): void {
     );
 
     CREATE TABLE IF NOT EXISTS chunk_tags (
-      chunk_id      INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+      pr_id         INTEGER NOT NULL REFERENCES prs(id) ON DELETE CASCADE,
+      content_hash  TEXT NOT NULL,
       tag_id        INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-      PRIMARY KEY (chunk_id, tag_id)
+      PRIMARY KEY (pr_id, content_hash, tag_id)
     );
 
     CREATE TABLE IF NOT EXISTS chunk_metadata (
-      chunk_id      INTEGER PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+      pr_id         INTEGER NOT NULL REFERENCES prs(id) ON DELETE CASCADE,
+      content_hash  TEXT NOT NULL,
       priority      TEXT NOT NULL DEFAULT 'medium',
       review_note   TEXT,
-      llm_run_id    INTEGER REFERENCES llm_runs(id) ON DELETE SET NULL
+      llm_run_id    INTEGER REFERENCES llm_runs(id) ON DELETE SET NULL,
+      PRIMARY KEY (pr_id, content_hash)
     );
 
     CREATE TABLE IF NOT EXISTS comments (
@@ -122,7 +133,7 @@ function createTables(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_chunks_pr_id ON chunks(pr_id);
     CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash);
-    CREATE INDEX IF NOT EXISTS idx_chunk_tags_chunk_id ON chunk_tags(chunk_id);
+    CREATE INDEX IF NOT EXISTS idx_chunk_tags_pr_hash ON chunk_tags(pr_id, content_hash);
     CREATE INDEX IF NOT EXISTS idx_chunk_tags_tag_id ON chunk_tags(tag_id);
     CREATE INDEX IF NOT EXISTS idx_tags_pr_id ON tags(pr_id);
     CREATE INDEX IF NOT EXISTS idx_comments_chunk_id ON comments(chunk_id);
@@ -160,5 +171,11 @@ function runMigrations(db: Database.Database): void {
   const chunkCols = db.pragma('table_info(chunks)') as Array<{ name: string }>;
   if (!chunkCols.some((c) => c.name === 'file_status')) {
     db.exec("ALTER TABLE chunks ADD COLUMN file_status TEXT NOT NULL DEFAULT 'modified'");
+  }
+
+  // Migration: add old_start_line and old_end_line columns to chunks table
+  if (!chunkCols.some((c) => c.name === 'old_start_line')) {
+    db.exec('ALTER TABLE chunks ADD COLUMN old_start_line INTEGER NOT NULL DEFAULT 0');
+    db.exec('ALTER TABLE chunks ADD COLUMN old_end_line INTEGER NOT NULL DEFAULT 0');
   }
 }

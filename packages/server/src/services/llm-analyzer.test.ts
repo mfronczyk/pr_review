@@ -22,6 +22,9 @@ const SAMPLE_FILE_DIFFS: ParsedFileDiff[] = [
         contentHash: 'abc123',
         startLine: 10,
         endLine: 16,
+        oldStartLine: 10,
+        oldEndLine: 15,
+        fileStatus: 'modified',
       },
       {
         filePath: 'src/requests/utils.py',
@@ -30,6 +33,9 @@ const SAMPLE_FILE_DIFFS: ParsedFileDiff[] = [
         contentHash: 'def456',
         startLine: 46,
         endLine: 52,
+        oldStartLine: 45,
+        oldEndLine: 51,
+        fileStatus: 'modified',
       },
     ],
   },
@@ -45,6 +51,9 @@ const SAMPLE_FILE_DIFFS: ParsedFileDiff[] = [
         contentHash: 'ghi789',
         startLine: 1,
         endLine: 10,
+        oldStartLine: 0,
+        oldEndLine: 0,
+        fileStatus: 'added',
       },
     ],
   },
@@ -671,7 +680,7 @@ describe('analyzePr', () => {
   });
 
   it('should store chunk_tags linking chunks to tags in DB', async () => {
-    const { db, prId, chunkIds } = await setupTestDb();
+    const { db, prId } = await setupTestDb();
 
     const mock = mockAnalyzerSdk({
       promptHandler: (args) => {
@@ -702,16 +711,17 @@ describe('analyzePr', () => {
     // chunk 2 (_types.py:0) → type-definitions
     const chunkTags = db
       .prepare(
-        `SELECT ct.chunk_id, t.name
+        `SELECT ct.content_hash, t.name
          FROM chunk_tags ct JOIN tags t ON ct.tag_id = t.id
-         ORDER BY ct.chunk_id, t.name`,
+         WHERE ct.pr_id = ?
+         ORDER BY ct.content_hash, t.name`,
       )
-      .all() as { chunk_id: number; name: string }[];
+      .all(prId) as { content_hash: string; name: string }[];
 
     expect(chunkTags).toEqual([
-      { chunk_id: chunkIds[0], name: 'type-annotations' },
-      { chunk_id: chunkIds[1], name: 'type-annotations' },
-      { chunk_id: chunkIds[2], name: 'type-definitions' },
+      { content_hash: 'abc123', name: 'type-annotations' },
+      { content_hash: 'def456', name: 'type-annotations' },
+      { content_hash: 'ghi789', name: 'type-definitions' },
     ]);
 
     db.close();

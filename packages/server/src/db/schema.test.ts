@@ -18,6 +18,7 @@ describe('Database Schema', () => {
 
     expect(tableNames).toContain('prs');
     expect(tableNames).toContain('chunks');
+    expect(tableNames).toContain('chunk_reviews');
     expect(tableNames).toContain('tags');
     expect(tableNames).toContain('chunk_tags');
     expect(tableNames).toContain('chunk_metadata');
@@ -238,6 +239,102 @@ describe('Database Schema', () => {
 
     testDb.close();
     migratedDb.close();
+  });
+
+  it('should store approval state in chunk_reviews keyed by (pr_id, content_hash)', () => {
+    db.prepare(
+      "INSERT INTO prs (owner, repo, number, gh_host) VALUES ('org', 'repo', 50, 'github.com')",
+    ).run();
+    const pr = db.prepare('SELECT id FROM prs WHERE number = 50').get() as { id: number };
+
+    // Insert a review
+    db.prepare(
+      `INSERT INTO chunk_reviews (pr_id, content_hash, approved, approved_at)
+       VALUES (?, 'hash1', 1, datetime('now'))`,
+    ).run(pr.id);
+
+    const review = db
+      .prepare('SELECT * FROM chunk_reviews WHERE pr_id = ? AND content_hash = ?')
+      .get(pr.id, 'hash1') as { approved: number };
+    expect(review.approved).toBe(1);
+
+    // Duplicate (pr_id, content_hash) should conflict
+    expect(() => {
+      db.prepare(
+        `INSERT INTO chunk_reviews (pr_id, content_hash, approved)
+         VALUES (?, 'hash1', 0)`,
+      ).run(pr.id);
+    }).toThrow();
+
+    // CASCADE delete when PR is deleted
+    db.prepare('DELETE FROM prs WHERE id = ?').run(pr.id);
+    const reviews = db.prepare('SELECT * FROM chunk_reviews WHERE pr_id = ?').all(pr.id);
+    expect(reviews).toHaveLength(0);
+  });
+
+  it('should key chunk_tags by (pr_id, content_hash, tag_id) instead of chunk_id', () => {
+    db.prepare(
+      "INSERT INTO prs (owner, repo, number, gh_host) VALUES ('org', 'repo', 51, 'github.com')",
+    ).run();
+    const pr = db.prepare('SELECT id FROM prs WHERE number = 51').get() as { id: number };
+
+    db.prepare('INSERT INTO tags (pr_id, name, description) VALUES (?, ?, ?)').run(
+      pr.id,
+      'tag1',
+      'desc',
+    );
+    const tag = db.prepare("SELECT id FROM tags WHERE name = 'tag1' AND pr_id = ?").get(pr.id) as {
+      id: number;
+    };
+
+    // Insert chunk_tag by (pr_id, content_hash, tag_id)
+    db.prepare('INSERT INTO chunk_tags (pr_id, content_hash, tag_id) VALUES (?, ?, ?)').run(
+      pr.id,
+      'hash1',
+      tag.id,
+    );
+
+    // Duplicate insert should throw due to PRIMARY KEY constraint
+    expect(() => {
+      db.prepare('INSERT INTO chunk_tags (pr_id, content_hash, tag_id) VALUES (?, ?, ?)').run(
+        pr.id,
+        'hash1',
+        tag.id,
+      );
+    }).toThrow();
+
+    // Different content_hash, same tag should work
+    db.prepare('INSERT INTO chunk_tags (pr_id, content_hash, tag_id) VALUES (?, ?, ?)').run(
+      pr.id,
+      'hash2',
+      tag.id,
+    );
+
+    const tags = db.prepare('SELECT * FROM chunk_tags WHERE pr_id = ?').all(pr.id);
+    expect(tags).toHaveLength(2);
+  });
+
+  it('should key chunk_metadata by (pr_id, content_hash) instead of chunk_id', () => {
+    db.prepare(
+      "INSERT INTO prs (owner, repo, number, gh_host) VALUES ('org', 'repo', 52, 'github.com')",
+    ).run();
+    const pr = db.prepare('SELECT id FROM prs WHERE number = 52').get() as { id: number };
+
+    db.prepare(
+      "INSERT INTO chunk_metadata (pr_id, content_hash, priority) VALUES (?, 'hash1', 'high')",
+    ).run(pr.id);
+
+    const meta = db
+      .prepare('SELECT * FROM chunk_metadata WHERE pr_id = ? AND content_hash = ?')
+      .get(pr.id, 'hash1') as { priority: string };
+    expect(meta.priority).toBe('high');
+
+    // Duplicate should conflict
+    expect(() => {
+      db.prepare(
+        "INSERT INTO chunk_metadata (pr_id, content_hash, priority) VALUES (?, 'hash1', 'low')",
+      ).run(pr.id);
+    }).toThrow();
   });
 
   it('should set WAL journal mode for file-backed databases', () => {

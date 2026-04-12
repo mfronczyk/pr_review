@@ -366,12 +366,16 @@ export class CommentService {
 
     // Build a map from file_path to chunks for this PR
     const chunks = this.db
-      .prepare('SELECT id, file_path, start_line, end_line FROM chunks WHERE pr_id = ?')
+      .prepare(
+        'SELECT id, file_path, start_line, end_line, old_start_line, old_end_line FROM chunks WHERE pr_id = ?',
+      )
       .all(prId) as Array<{
       id: number;
       file_path: string;
       start_line: number;
       end_line: number;
+      old_start_line: number;
+      old_end_line: number;
     }>;
 
     // Map gh_comment_id to local comment id (for threading)
@@ -390,14 +394,19 @@ export class CommentService {
     for (const ghComment of ghComments) {
       if (existingGhIds.has(ghComment.id)) continue;
 
-      // Find the chunk this comment belongs to
+      // Find the chunk this comment belongs to.
+      // LEFT-side comments (on deleted lines) use old-side line ranges;
+      // RIGHT-side comments (on added/context lines) use new-side line ranges.
       const commentLine = ghComment.line ?? ghComment.original_line ?? 0;
       const commentSide = (ghComment.side === 'LEFT' ? 'LEFT' : 'RIGHT') as DiffSide;
       const commentPath = ghComment.path;
-      const chunk = chunks.find(
-        (c) =>
-          c.file_path === commentPath && commentLine >= c.start_line && commentLine <= c.end_line,
-      );
+      const chunk = chunks.find((c) => {
+        if (c.file_path !== commentPath) return false;
+        if (commentSide === 'LEFT') {
+          return commentLine >= c.old_start_line && commentLine <= c.old_end_line;
+        }
+        return commentLine >= c.start_line && commentLine <= c.end_line;
+      });
       if (!chunk) continue; // Comment is on a line we don't have a chunk for
 
       // Determine parent_id for threaded replies

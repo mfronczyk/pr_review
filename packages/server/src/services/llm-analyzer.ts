@@ -919,13 +919,13 @@ export function storeChunkMetadata(
   tagDefinitions: LlmTagDefinition[],
 ): void {
   const getChunk = db.prepare(
-    'SELECT id FROM chunks WHERE pr_id = ? AND file_path = ? AND chunk_index = ?',
+    'SELECT id, content_hash FROM chunks WHERE pr_id = ? AND file_path = ? AND chunk_index = ?',
   );
 
   const upsertMetadata = db.prepare(`
-    INSERT INTO chunk_metadata (chunk_id, priority, review_note, llm_run_id)
-    VALUES (@chunkId, @priority, @reviewNote, @llmRunId)
-    ON CONFLICT (chunk_id) DO UPDATE SET
+    INSERT INTO chunk_metadata (pr_id, content_hash, priority, review_note, llm_run_id)
+    VALUES (@prId, @contentHash, @priority, @reviewNote, @llmRunId)
+    ON CONFLICT (pr_id, content_hash) DO UPDATE SET
       priority = @priority,
       review_note = @reviewNote,
       llm_run_id = @llmRunId
@@ -939,10 +939,10 @@ export function storeChunkMetadata(
   `);
 
   const insertChunkTag = db.prepare(`
-    INSERT OR IGNORE INTO chunk_tags (chunk_id, tag_id) VALUES (?, ?)
+    INSERT OR IGNORE INTO chunk_tags (pr_id, content_hash, tag_id) VALUES (?, ?, ?)
   `);
 
-  const clearChunkTags = db.prepare('DELETE FROM chunk_tags WHERE chunk_id = ?');
+  const clearChunkTags = db.prepare('DELETE FROM chunk_tags WHERE pr_id = ? AND content_hash = ?');
 
   // Build a lookup from tag name to description from LLM definitions
   const tagDescriptions = new Map<string, string>();
@@ -953,21 +953,22 @@ export function storeChunkMetadata(
   const store = db.transaction(() => {
     for (const assignment of assignments) {
       const chunk = getChunk.get(prId, assignment.filePath, assignment.chunkIndex) as
-        | { id: number }
+        | { id: number; content_hash: string }
         | undefined;
 
       if (!chunk) continue;
 
-      // Upsert metadata
+      // Upsert metadata keyed by (pr_id, content_hash)
       upsertMetadata.run({
-        chunkId: chunk.id,
+        prId,
+        contentHash: chunk.content_hash,
         priority: assignment.priority,
         reviewNote: assignment.reviewNote,
         llmRunId,
       });
 
-      // Clear existing tags and re-assign
-      clearChunkTags.run(chunk.id);
+      // Clear existing tags and re-assign (keyed by pr_id, content_hash)
+      clearChunkTags.run(prId, chunk.content_hash);
 
       for (const tagName of assignment.tags) {
         const tag = getOrCreateTag.get({
@@ -976,18 +977,21 @@ export function storeChunkMetadata(
           prId,
         }) as { id: number };
 
-        insertChunkTag.run(chunk.id, tag.id);
+        insertChunkTag.run(prId, chunk.content_hash, tag.id);
       }
     }
 
     // Assign 'unassigned' tag to any chunks that have no tags
     const untaggedChunks = db
       .prepare(
-        `SELECT c.id FROM chunks c
+        `SELECT c.id, c.content_hash FROM chunks c
          WHERE c.pr_id = ?
-           AND c.id NOT IN (SELECT chunk_id FROM chunk_tags)`,
+           AND NOT EXISTS (
+             SELECT 1 FROM chunk_tags ct
+             WHERE ct.pr_id = c.pr_id AND ct.content_hash = c.content_hash
+           )`,
       )
-      .all(prId) as Array<{ id: number }>;
+      .all(prId) as Array<{ id: number; content_hash: string }>;
 
     if (untaggedChunks.length > 0) {
       const unassignedTag = getOrCreateTag.get({
@@ -997,7 +1001,7 @@ export function storeChunkMetadata(
       }) as { id: number };
 
       for (const chunk of untaggedChunks) {
-        insertChunkTag.run(chunk.id, unassignedTag.id);
+        insertChunkTag.run(prId, chunk.content_hash, unassignedTag.id);
       }
 
       console.log(
