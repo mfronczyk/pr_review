@@ -161,6 +161,39 @@ export class ChunkService {
   }
 
   /**
+   * Bulk unapprove all chunks with a given tag for a PR.
+   */
+  bulkUnapproveByTag(prId: number, tagId: number): number {
+    const hashesToUnapprove = this.db
+      .prepare(
+        `SELECT DISTINCT ct.content_hash FROM chunk_tags ct
+         WHERE ct.pr_id = ? AND ct.tag_id = ?
+           AND EXISTS (
+             SELECT 1 FROM chunk_reviews cr
+             WHERE cr.pr_id = ct.pr_id AND cr.content_hash = ct.content_hash AND cr.approved = 1
+           )`,
+      )
+      .all(prId, tagId) as Array<{ content_hash: string }>;
+
+    if (hashesToUnapprove.length === 0) return 0;
+
+    const upsert = this.db.prepare(
+      `INSERT INTO chunk_reviews (pr_id, content_hash, approved, approved_at)
+       VALUES (?, ?, 0, NULL)
+       ON CONFLICT (pr_id, content_hash) DO UPDATE SET approved = 0, approved_at = NULL`,
+    );
+
+    const tx = this.db.transaction(() => {
+      for (const row of hashesToUnapprove) {
+        upsert.run(prId, row.content_hash);
+      }
+    });
+    tx();
+
+    return hashesToUnapprove.length;
+  }
+
+  /**
    * Update chunk metadata (priority, review note).
    * Keyed by (pr_id, content_hash).
    */

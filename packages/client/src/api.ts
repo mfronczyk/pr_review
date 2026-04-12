@@ -132,6 +132,13 @@ export function bulkApprove(prId: number, tagId: number): Promise<{ approved: nu
   });
 }
 
+export function bulkUnapprove(prId: number, tagId: number): Promise<{ unapproved: number }> {
+  return request(`/api/prs/${prId}/bulk-unapprove`, {
+    method: 'POST',
+    body: JSON.stringify({ tagId }),
+  });
+}
+
 export function getTags(prId: number): Promise<Tag[]> {
   return request(`/api/prs/${prId}/tags`);
 }

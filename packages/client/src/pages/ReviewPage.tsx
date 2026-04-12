@@ -277,6 +277,7 @@ const Sidebar = memo(function Sidebar({
   onScrollToFile,
   onClearFilter,
   onBulkApprove,
+  onBulkUnapprove,
 }: {
   pr: PrWithProgress;
   groups: GroupInfo[];
@@ -288,6 +289,8 @@ const Sidebar = memo(function Sidebar({
   onScrollToFile: (filePath: string) => void;
   onClearFilter: () => void;
   onBulkApprove: (tagId: number) => void;
+  onBulkUnapprove: (tagId: number) => void;
+  onBulkUnapprove: (tagId: number) => void;
 }): React.ReactElement {
   const [filesExpanded, setFilesExpanded] = useState(true);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
@@ -440,9 +443,18 @@ const Sidebar = memo(function Sidebar({
                     </span>
                   </div>
                   {allApproved ? (
-                    <span className="flex-shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-800/50 dark:text-green-300">
-                      ✓ Done
-                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onBulkUnapprove(g.tag.id);
+                      }}
+                      className="group/done flex-shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 hover:bg-red-100 hover:text-red-700 dark:bg-green-800/50 dark:text-green-300 dark:hover:bg-red-900/40 dark:hover:text-red-400"
+                      title="Unapprove all chunks in this group"
+                    >
+                      <span className="group-hover/done:hidden">✓ Done</span>
+                      <span className="hidden group-hover/done:inline">✕ Unapprove</span>
+                    </button>
                   ) : (
                     <button
                       type="button"
@@ -910,6 +922,22 @@ export function ReviewPage(): React.ReactElement {
     [prId, withErrorHandling],
   );
 
+  const handleBulkUnapprove = useCallback(
+    async (tagId: number): Promise<void> => {
+      // Optimistically mark all chunks with this tag as unapproved
+      setChunks((prev) => {
+        if (!prev) return prev;
+        return prev.map((c) =>
+          c.tags.some((t) => t.id === tagId) ? { ...c, approved: false } : c,
+        );
+      });
+      await withErrorHandling(async () => {
+        await api.bulkUnapprove(prId, tagId);
+      });
+    },
+    [prId, withErrorHandling],
+  );
+
   const handleAddComment = useCallback(
     async (chunkId: number, body: string, line: number, side: 'LEFT' | 'RIGHT'): Promise<void> => {
       await withErrorHandling(async () => {
@@ -1150,6 +1178,7 @@ export function ReviewPage(): React.ReactElement {
         onScrollToFile={handleScrollToFile}
         onClearFilter={handleClearFilter}
         onBulkApprove={handleBulkApprove}
+        onBulkUnapprove={handleBulkUnapprove}
       />
 
       <div className="flex flex-1 flex-col overflow-hidden">
