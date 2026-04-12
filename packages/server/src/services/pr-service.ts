@@ -1,3 +1,4 @@
+import type { DatabaseSync } from 'node:sqlite';
 import type {
   PrState,
   PullRequest,
@@ -5,14 +6,13 @@ import type {
   SubmitReviewResponse,
   SyncResult,
 } from '@pr-review/shared';
-import type Database from 'better-sqlite3';
 import { CommentService } from './comment-service.js';
 import { flattenChunks, parseDiff } from './diff-parser.js';
 import { GitService } from './git.js';
 import { getOctokit } from './github-client.js';
 
 export interface PrServiceOptions {
-  db: Database.Database;
+  db: DatabaseSync;
   repoPath: string;
 }
 
@@ -21,7 +21,7 @@ export interface PrServiceOptions {
  * computing diffs from local git, parsing chunks, and persisting to SQLite.
  */
 export class PrService {
-  private readonly db: Database.Database;
+  private readonly db: DatabaseSync;
   private readonly git: GitService;
 
   constructor(options: PrServiceOptions) {
@@ -84,7 +84,7 @@ export class PrService {
 
     const pr = this.db
       .prepare('SELECT * FROM prs WHERE owner = ? AND repo = ? AND number = ? AND gh_host = ?')
-      .get(owner, repo, prNumber, ghHost) as PrDbRow;
+      .get(owner, repo, prNumber, ghHost) as unknown as PrDbRow;
 
     // 4. Fetch PR branch and compute diff
     await this.fetchAndStoreDiff(pr);
@@ -140,7 +140,9 @@ export class PrService {
     }
 
     // Recompute diff and update chunks
-    const updatedPr = this.db.prepare('SELECT * FROM prs WHERE id = ?').get(prId) as PrDbRow;
+    const updatedPr = this.db
+      .prepare('SELECT * FROM prs WHERE id = ?')
+      .get(prId) as unknown as PrDbRow;
     const result = await this.fetchAndStoreDiff(updatedPr);
 
     // Import GitHub comments (new replies, etc.)
@@ -229,94 +231,102 @@ export class PrService {
       if (!newHashes.has(h)) removed++;
     }
 
-    const reconcile = this.db.transaction(() => {
-      // 1. Delete all existing chunks (comments CASCADE-delete with them)
-      this.db.prepare('DELETE FROM chunks WHERE pr_id = ?').run(prId);
+    const reconcile = (): void => {
+      this.db.exec('BEGIN');
+      try {
+        // 1. Delete all existing chunks (comments CASCADE-delete with them)
+        this.db.prepare('DELETE FROM chunks WHERE pr_id = ?').run(prId);
 
-      // 2. Insert all new chunks
-      const insertChunk = this.db.prepare(`
-        INSERT INTO chunks (pr_id, file_path, chunk_index, content_hash, diff_text, start_line, end_line, old_start_line, old_end_line, file_status)
-        VALUES (@prId, @filePath, @chunkIndex, @contentHash, @diffText, @startLine, @endLine, @oldStartLine, @oldEndLine, @fileStatus)
-      `);
-
-      for (const chunk of newChunks) {
-        insertChunk.run({
-          prId,
-          filePath: chunk.filePath,
-          chunkIndex: chunk.chunkIndex,
-          contentHash: chunk.contentHash,
-          diffText: chunk.diffText,
-          startLine: chunk.startLine,
-          endLine: chunk.endLine,
-          oldStartLine: chunk.oldStartLine ?? 0,
-          oldEndLine: chunk.oldEndLine ?? 0,
-          fileStatus: chunk.fileStatus ?? 'modified',
-        });
-      }
-
-      // 3. Clean up orphaned hash-keyed rows for hashes no longer present.
-      //    This prevents unbounded growth of chunk_reviews, chunk_tags, and
-      //    chunk_metadata when chunk content changes across syncs.
-      const activeHashes = this.db
-        .prepare('SELECT DISTINCT content_hash FROM chunks WHERE pr_id = ?')
-        .all(prId) as Array<{ content_hash: string }>;
-      const activeHashSet = new Set(activeHashes.map((r) => r.content_hash));
-
-      const cleanupTable = (table: string): void => {
-        const orphans = this.db
-          .prepare(`SELECT DISTINCT content_hash FROM ${table} WHERE pr_id = ?`)
-          .all(prId) as Array<{ content_hash: string }>;
-
-        const deleteStmt = this.db.prepare(
-          `DELETE FROM ${table} WHERE pr_id = ? AND content_hash = ?`,
-        );
-        for (const row of orphans) {
-          if (!activeHashSet.has(row.content_hash)) {
-            deleteStmt.run(prId, row.content_hash);
-          }
-        }
-      };
-
-      cleanupTable('chunk_reviews');
-      cleanupTable('chunk_tags');
-      cleanupTable('chunk_metadata');
-
-      // 4. Assign the 'unassigned' tag to any chunks that have no tags
-      //    (checked via content_hash in chunk_tags, not chunk_id).
-      const untaggedChunks = this.db
-        .prepare(
-          `SELECT c.id, c.content_hash FROM chunks c
-           WHERE c.pr_id = ?
-             AND NOT EXISTS (
-               SELECT 1 FROM chunk_tags ct
-               WHERE ct.pr_id = c.pr_id AND ct.content_hash = c.content_hash
-             )`,
-        )
-        .all(prId) as Array<{ id: number; content_hash: string }>;
-
-      if (untaggedChunks.length > 0) {
-        const getOrCreateTag = this.db.prepare(`
-          INSERT INTO tags (name, description, pr_id)
-          VALUES (@name, @description, @prId)
-          ON CONFLICT (name, pr_id) DO UPDATE SET description = description
-          RETURNING id
+        // 2. Insert all new chunks
+        const insertChunk = this.db.prepare(`
+          INSERT INTO chunks (pr_id, file_path, chunk_index, content_hash, diff_text, start_line, end_line, old_start_line, old_end_line, file_status)
+          VALUES (@prId, @filePath, @chunkIndex, @contentHash, @diffText, @startLine, @endLine, @oldStartLine, @oldEndLine, @fileStatus)
         `);
 
-        const unassignedTag = getOrCreateTag.get({
-          name: 'unassigned',
-          description: 'Chunks not categorized by LLM analysis',
-          prId,
-        }) as { id: number };
-
-        const insertChunkTag = this.db.prepare(
-          'INSERT OR IGNORE INTO chunk_tags (pr_id, content_hash, tag_id) VALUES (?, ?, ?)',
-        );
-
-        for (const chunk of untaggedChunks) {
-          insertChunkTag.run(prId, chunk.content_hash, unassignedTag.id);
+        for (const chunk of newChunks) {
+          insertChunk.run({
+            prId,
+            filePath: chunk.filePath,
+            chunkIndex: chunk.chunkIndex,
+            contentHash: chunk.contentHash,
+            diffText: chunk.diffText,
+            startLine: chunk.startLine,
+            endLine: chunk.endLine,
+            oldStartLine: chunk.oldStartLine ?? 0,
+            oldEndLine: chunk.oldEndLine ?? 0,
+            fileStatus: chunk.fileStatus ?? 'modified',
+          });
         }
+
+        // 3. Clean up orphaned hash-keyed rows for hashes no longer present.
+        //    This prevents unbounded growth of chunk_reviews, chunk_tags, and
+        //    chunk_metadata when chunk content changes across syncs.
+        const activeHashes = this.db
+          .prepare('SELECT DISTINCT content_hash FROM chunks WHERE pr_id = ?')
+          .all(prId) as Array<{ content_hash: string }>;
+        const activeHashSet = new Set(activeHashes.map((r) => r.content_hash));
+
+        const cleanupTable = (table: string): void => {
+          const orphans = this.db
+            .prepare(`SELECT DISTINCT content_hash FROM ${table} WHERE pr_id = ?`)
+            .all(prId) as Array<{ content_hash: string }>;
+
+          const deleteStmt = this.db.prepare(
+            `DELETE FROM ${table} WHERE pr_id = ? AND content_hash = ?`,
+          );
+          for (const row of orphans) {
+            if (!activeHashSet.has(row.content_hash)) {
+              deleteStmt.run(prId, row.content_hash);
+            }
+          }
+        };
+
+        cleanupTable('chunk_reviews');
+        cleanupTable('chunk_tags');
+        cleanupTable('chunk_metadata');
+
+        // 4. Assign the 'unassigned' tag to any chunks that have no tags
+        //    (checked via content_hash in chunk_tags, not chunk_id).
+        const untaggedChunks = this.db
+          .prepare(
+            `SELECT c.id, c.content_hash FROM chunks c
+             WHERE c.pr_id = ?
+               AND NOT EXISTS (
+                 SELECT 1 FROM chunk_tags ct
+                 WHERE ct.pr_id = c.pr_id AND ct.content_hash = c.content_hash
+               )`,
+          )
+          .all(prId) as Array<{ id: number; content_hash: string }>;
+
+        if (untaggedChunks.length > 0) {
+          const getOrCreateTag = this.db.prepare(`
+            INSERT INTO tags (name, description, pr_id)
+            VALUES (@name, @description, @prId)
+            ON CONFLICT (name, pr_id) DO UPDATE SET description = description
+            RETURNING id
+          `);
+
+          const unassignedTag = getOrCreateTag.get({
+            name: 'unassigned',
+            description: 'Chunks not categorized by LLM analysis',
+            prId,
+          }) as { id: number };
+
+          const insertChunkTag = this.db.prepare(
+            'INSERT OR IGNORE INTO chunk_tags (pr_id, content_hash, tag_id) VALUES (?, ?, ?)',
+          );
+
+          for (const chunk of untaggedChunks) {
+            insertChunkTag.run(prId, chunk.content_hash, unassignedTag.id);
+          }
+        }
+
+        this.db.exec('COMMIT');
+      } catch (e) {
+        this.db.exec('ROLLBACK');
+        throw e;
       }
-    });
+    };
 
     reconcile();
 
@@ -335,7 +345,9 @@ export class PrService {
    * List all tracked PRs.
    */
   listPrs(): PullRequest[] {
-    const rows = this.db.prepare('SELECT * FROM prs ORDER BY updated_at DESC').all() as PrDbRow[];
+    const rows = this.db
+      .prepare('SELECT * FROM prs ORDER BY updated_at DESC')
+      .all() as unknown as PrDbRow[];
     return rows.map(mapPrRow);
   }
 

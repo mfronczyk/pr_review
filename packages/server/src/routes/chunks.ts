@@ -1,8 +1,8 @@
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import { Router } from 'express';
 import { ChunkService } from '../services/chunk-service.js';
 
-export function createChunkRoutes(db: Database.Database): Router {
+export function createChunkRoutes(db: DatabaseSync): Router {
   const router = Router();
   const chunkService = new ChunkService({ db });
 

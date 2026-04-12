@@ -1,3 +1,4 @@
+import type { DatabaseSync } from 'node:sqlite';
 import type {
   AddPrRequest,
   ImportAnalysisRequest,
@@ -6,7 +7,6 @@ import type {
   ReviewEvent,
   SubmitReviewRequest,
 } from '@pr-review/shared';
-import type Database from 'better-sqlite3';
 import { Router } from 'express';
 import { ChunkService } from '../services/chunk-service.js';
 import { parseDiff } from '../services/diff-parser.js';
@@ -18,7 +18,7 @@ import {
 } from '../services/llm-analyzer.js';
 import { PrService } from '../services/pr-service.js';
 
-export function createPrRoutes(db: Database.Database, repoPath: string): Router {
+export function createPrRoutes(db: DatabaseSync, repoPath: string): Router {
   const router = Router();
   const prService = new PrService({ db, repoPath });
   const chunkService = new ChunkService({ db });

@@ -1,8 +1,8 @@
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import { Router } from 'express';
 import { CommentService } from '../services/comment-service.js';
 
-export function createCommentRoutes(db: Database.Database): Router {
+export function createCommentRoutes(db: DatabaseSync): Router {
   const router = Router();
   const commentService = new CommentService({ db });
 

@@ -290,7 +290,6 @@ const Sidebar = memo(function Sidebar({
   onClearFilter: () => void;
   onBulkApprove: (tagId: number) => void;
   onBulkUnapprove: (tagId: number) => void;
-  onBulkUnapprove: (tagId: number) => void;
 }): React.ReactElement {
   const [filesExpanded, setFilesExpanded] = useState(true);
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());

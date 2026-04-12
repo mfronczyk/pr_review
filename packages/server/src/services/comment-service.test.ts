@@ -1,10 +1,10 @@
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { initDatabase } from '../db/schema.js';
 import { CommentService } from './comment-service.js';
 
 describe('CommentService', () => {
-  let db: Database.Database;
+  let db: DatabaseSync;
   let service: CommentService;
   let prId: number;
   let chunkId: number;

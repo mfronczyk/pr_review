@@ -1,9 +1,9 @@
-import type Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { initDatabase } from './schema.js';
 
 describe('Database Schema', () => {
-  let db: Database.Database;
+  let db: DatabaseSync;
 
   beforeEach(() => {
     db = initDatabase(':memory:');
@@ -122,7 +122,7 @@ describe('Database Schema', () => {
   });
 
   it('should include file_status column in chunks table', () => {
-    const cols = db.pragma('table_info(chunks)') as Array<{ name: string }>;
+    const cols = db.prepare('PRAGMA table_info(chunks)').all() as Array<{ name: string }>;
     expect(cols.some((c) => c.name === 'file_status')).toBe(true);
   });
 
@@ -144,9 +144,9 @@ describe('Database Schema', () => {
   });
 
   it('should migrate existing databases to add file_status column', () => {
-    const DatabaseLib = require('better-sqlite3');
-    const migrateDb = new DatabaseLib(':memory:');
-    migrateDb.pragma('foreign_keys = ON');
+    const migrateDb = new DatabaseSync(':memory:', {
+      enableForeignKeyConstraints: true,
+    });
 
     // Create old schema without file_status
     migrateDb.exec(`
@@ -188,7 +188,9 @@ describe('Database Schema', () => {
       .run(prRow.id);
 
     // Verify file_status column does not exist
-    const colsBefore = migrateDb.pragma('table_info(chunks)') as Array<{ name: string }>;
+    const colsBefore = migrateDb.prepare('PRAGMA table_info(chunks)').all() as Array<{
+      name: string;
+    }>;
     expect(colsBefore.some((c: { name: string }) => c.name === 'file_status')).toBe(false);
 
     // Close and re-init to trigger migration
@@ -198,8 +200,9 @@ describe('Database Schema', () => {
     const migratedDb = initDatabase(':memory:');
     // Can't migrate existing in-memory DB, so test the migration function directly
     // Instead, simulate by manually running the migration logic
-    const testDb = new DatabaseLib(':memory:');
-    testDb.pragma('foreign_keys = ON');
+    const testDb = new DatabaseSync(':memory:', {
+      enableForeignKeyConstraints: true,
+    });
     testDb.exec(`
       CREATE TABLE prs (
         id INTEGER PRIMARY KEY, owner TEXT, repo TEXT, number INTEGER,
@@ -222,13 +225,17 @@ describe('Database Schema', () => {
       .run();
 
     // Run the migration
-    const chunkCols = testDb.pragma('table_info(chunks)') as Array<{ name: string }>;
+    const chunkCols = testDb.prepare('PRAGMA table_info(chunks)').all() as Array<{
+      name: string;
+    }>;
     if (!chunkCols.some((c: { name: string }) => c.name === 'file_status')) {
       testDb.exec("ALTER TABLE chunks ADD COLUMN file_status TEXT NOT NULL DEFAULT 'modified'");
     }
 
     // Verify migration worked
-    const colsAfter = testDb.pragma('table_info(chunks)') as Array<{ name: string }>;
+    const colsAfter = testDb.prepare('PRAGMA table_info(chunks)').all() as Array<{
+      name: string;
+    }>;
     expect(colsAfter.some((c: { name: string }) => c.name === 'file_status')).toBe(true);
 
     // Verify existing row got default value
@@ -346,7 +353,9 @@ describe('Database Schema', () => {
     const tmpPath = path.join(os.tmpdir(), `pr-review-test-${Date.now()}.db`);
     try {
       const fileDb = initDatabase(tmpPath);
-      const result = fileDb.pragma('journal_mode') as Array<{ journal_mode: string }>;
+      const result = fileDb.prepare('PRAGMA journal_mode').all() as Array<{
+        journal_mode: string;
+      }>;
       expect(result[0].journal_mode).toBe('wal');
       fileDb.close();
     } finally {

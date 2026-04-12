@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { DatabaseSync } from 'node:sqlite';
 import type { ServerConfig } from '@pr-review/shared';
-import type Database from 'better-sqlite3';
 import express from 'express';
 import { initDatabase } from './db/schema.js';
 import { createChunkRoutes } from './routes/chunks.js';
@@ -16,7 +16,7 @@ const REPO_PATH = process.env.REPO_PATH ?? process.cwd();
  * Create and configure the Express app.
  * Exported separately so tests can create an app with a custom DB.
  */
-export function createApp(db: Database.Database, repoPath: string): express.Express {
+export function createApp(db: DatabaseSync, repoPath: string): express.Express {
   const app = express();
   app.use(express.json());
 
@@ -111,7 +111,7 @@ if (process.env.NODE_ENV !== 'test') {
   const remoteUrl = validateRepoPath(REPO_PATH);
 
   const dbPath = path.join(REPO_PATH, '.pr-review', 'data.db');
-  const db: Database.Database = initDatabase(dbPath);
+  const db: DatabaseSync = initDatabase(dbPath);
   const app = createApp(db, REPO_PATH);
 
   app.listen(PORT, () => {

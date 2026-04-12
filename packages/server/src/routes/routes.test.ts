@@ -6,7 +6,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -18,7 +18,7 @@ vi.mock('../services/github-client.js', () => ({
   getOctokit: vi.fn(),
 }));
 
-let db: Database.Database;
+let db: DatabaseSync;
 let app: ReturnType<typeof createApp>;
 let dbPath: string;
 
