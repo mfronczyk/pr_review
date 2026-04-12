@@ -520,6 +520,8 @@ function Toolbar({
   onToggleHideApproved,
   showUnresolved,
   onToggleShowUnresolved,
+  wrapLines,
+  onToggleWrapLines,
   onSync,
   onAnalyze,
   onDownloadPrompt,
@@ -540,6 +542,8 @@ function Toolbar({
   onToggleHideApproved: () => void;
   showUnresolved: boolean;
   onToggleShowUnresolved: () => void;
+  wrapLines: boolean;
+  onToggleWrapLines: () => void;
   onSync: () => void;
   onAnalyze: () => void;
   onDownloadPrompt: () => void;
@@ -599,6 +603,15 @@ function Toolbar({
             className="rounded border-border-primary bg-surface-input text-blue-500 focus:ring-blue-500"
           />
           Show unresolved
+        </label>
+        <label className="flex items-center gap-2 text-xs text-fg-tertiary">
+          <input
+            type="checkbox"
+            checked={wrapLines}
+            onChange={onToggleWrapLines}
+            className="rounded border-border-primary bg-surface-input text-blue-500 focus:ring-blue-500"
+          />
+          Wrap lines
         </label>
         <span className="text-xs font-mono">
           <span className="text-green-600 dark:text-green-400">+{additions}</span>{' '}
@@ -689,6 +702,7 @@ export function ReviewPage(): React.ReactElement {
   const [activeFile, setActiveFile] = useState<string | null>(null);
   const [hideApproved, setHideApproved] = useState(false);
   const [showUnresolved, setShowUnresolved] = useState(false);
+  const [wrapLines, setWrapLines] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [downloadingPrompt, setDownloadingPrompt] = useState(false);
@@ -1197,6 +1211,8 @@ export function ReviewPage(): React.ReactElement {
           onToggleHideApproved={handleToggleHideApproved}
           showUnresolved={showUnresolved}
           onToggleShowUnresolved={() => setShowUnresolved((v) => !v)}
+          wrapLines={wrapLines}
+          onToggleWrapLines={() => setWrapLines((v) => !v)}
           onSync={handleSync}
           onAnalyze={handleAnalyze}
           onDownloadPrompt={handleDownloadPrompt}
@@ -1226,6 +1242,7 @@ export function ReviewPage(): React.ReactElement {
               chunks={filteredChunks}
               departingChunkIds={departingChunkIds}
               scrollToFile={scrollToFile}
+              wrapLines={wrapLines}
               headerContent={
                 activeGroup ? (
                   <div className="mx-auto mb-4 max-w-3xl">

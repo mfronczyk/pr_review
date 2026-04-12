@@ -22,6 +22,8 @@ interface DiffViewerProps {
   chunks: ChunkWithDetails[];
   departingChunkIds: ReadonlySet<number>;
   scrollToFile: string | null;
+  /** When true, long lines wrap instead of being clipped. */
+  wrapLines?: boolean;
   /** Optional content rendered at the top of the scroll area (scrolls away with the diff). */
   headerContent?: React.ReactNode;
   onToggleApproved: (chunkId: number) => void;
@@ -345,15 +347,18 @@ const gutterStyles: Record<ParsedDiffLine['type'], string> = {
 function DiffLine({
   parsed,
   highlightedHtml,
+  wrapLines,
   onClickAdd,
 }: {
   parsed: ParsedDiffLine;
   highlightedHtml: string | null;
+  wrapLines?: boolean;
   onClickAdd?: () => void;
 }): React.ReactElement {
   const { bg, text } = lineStyles[parsed.type];
   const gutter = gutterStyles[parsed.type];
   const canComment = parsed.type !== 'hunk-header';
+  const ws = wrapLines ? 'whitespace-pre-wrap break-words' : 'whitespace-pre';
 
   return (
     <div className={`group/line relative flex ${bg}`}>
@@ -389,12 +394,12 @@ function DiffLine({
       {/* Code content */}
       {highlightedHtml != null ? (
         <code
-          className={`hljs flex-1 whitespace-pre pr-3 text-xs leading-5 ${parsed.type === 'hunk-header' ? text : ''}`}
+          className={`hljs min-w-0 flex-1 ${ws} pr-3 text-xs leading-5 ${parsed.type === 'hunk-header' ? text : ''}`}
           // biome-ignore lint/security/noDangerouslySetInnerHtml: highlight.js output is trusted
           dangerouslySetInnerHTML={{ __html: highlightedHtml || '&nbsp;' }}
         />
       ) : (
-        <code className={`flex-1 whitespace-pre pr-3 text-xs leading-5 ${text}`}>
+        <code className={`min-w-0 flex-1 ${ws} pr-3 text-xs leading-5 ${text}`}>
           {parsed.content || ' '}
         </code>
       )}
@@ -431,6 +436,7 @@ function getLastNewLineNum(parsedLines: ParsedDiffLine[]): number {
 
 function ChunkBlock({
   chunk,
+  wrapLines,
   onToggleApproved,
   onAddComment,
   onReplyComment,
@@ -442,6 +448,7 @@ function ChunkBlock({
   isLast,
 }: {
   chunk: ChunkWithDetails;
+  wrapLines?: boolean;
   onToggleApproved: () => void;
   onAddComment: (body: string, line: number, side: 'LEFT' | 'RIGHT') => Promise<void>;
   onReplyComment: (parentId: number, body: string) => Promise<void>;
@@ -622,6 +629,7 @@ function ChunkBlock({
                   <DiffLine
                     parsed={parsed}
                     highlightedHtml={highlightedHtmlLines[i]}
+                    wrapLines={wrapLines}
                     onClickAdd={
                       parsed.type !== 'hunk-header' ? () => setCommentFormIndex(i) : undefined
                     }
@@ -758,6 +766,7 @@ function AnimatedChunkWrapper({
 
 function FileBox({
   group,
+  wrapLines,
   departingChunkIds,
   onToggleApproved,
   onChunkDeparted,
@@ -770,6 +779,7 @@ function FileBox({
   onUnresolveThread,
 }: {
   group: FileGroup;
+  wrapLines?: boolean;
   departingChunkIds: ReadonlySet<number>;
   onToggleApproved: (chunkId: number) => void;
   onChunkDeparted: (chunkId: number) => void;
@@ -788,8 +798,8 @@ function FileBox({
 }): React.ReactElement {
   return (
     <div className="overflow-hidden rounded-lg border border-border-primary bg-surface-primary">
-      {/* File header — sticky within file box */}
-      <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border-primary bg-surface-secondary px-4 py-2">
+      {/* File header */}
+      <div className="flex items-center gap-2 border-b border-border-primary bg-surface-secondary px-4 pt-4 pb-2">
         <span className="font-mono text-xs text-fg-primary font-medium">{group.filePath}</span>
         <span className="text-xs text-fg-muted">
           ({group.chunks.length} chunk{group.chunks.length !== 1 ? 's' : ''})
@@ -808,6 +818,7 @@ function FileBox({
         >
           <ChunkBlock
             chunk={chunk}
+            wrapLines={wrapLines}
             onToggleApproved={() => onToggleApproved(chunk.id)}
             onAddComment={(body, line, side) => onAddComment(chunk.id, body, line, side)}
             onReplyComment={(parentId, body) => onReplyComment(chunk.id, parentId, body)}
@@ -830,6 +841,7 @@ export const DiffViewer = memo(function DiffViewer({
   chunks,
   departingChunkIds,
   scrollToFile,
+  wrapLines,
   headerContent,
   onToggleApproved,
   onChunkDeparted,
@@ -909,6 +921,13 @@ export const DiffViewer = memo(function DiffViewer({
     overscan: 3,
   });
 
+  // When wrapLines changes, previously-measured row heights become stale.
+  // Force the virtualizer to re-measure all items.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: wrapLines triggers remeasure even though it's not read inside the effect
+  useEffect(() => {
+    virtualizer.measure();
+  }, [wrapLines, virtualizer]);
+
   // Scroll to top when the set of file groups changes (e.g. switching tag groups).
   // Compare by file-path list so that approval toggles (which create new fileGroups
   // references but keep the same files) don't trigger a scroll reset.
@@ -938,45 +957,157 @@ export const DiffViewer = memo(function DiffViewer({
     onScrollToFileDone();
   }, [scrollToFile, fileGroups, virtualizer, onScrollToFileDone]);
 
+  // ── Sticky file-name overlay ──────────────────────────────
+  // Tracks which file is at the top of the viewport and shows a pinned
+  // header bar (like GitHub) that sits flush with the toolbar.  When the
+  // next file's inline header approaches, the overlay slides up to make
+  // room — no abrupt pop-in/pop-out.
+  const stickyRef = useRef<HTMLDivElement>(null);
+  const [stickyFile, setStickyFile] = useState<FileGroup | null>(null);
+  const [stickyOffset, setStickyOffset] = useState(0); // negative translateY when being pushed
+
+  useEffect(() => {
+    const scrollEl = parentRef.current;
+    if (!scrollEl) return;
+
+    function handleScroll(): void {
+      const items = virtualizer.getVirtualItems();
+      if (items.length === 0) {
+        setStickyFile(null);
+        setStickyOffset(0);
+        return;
+      }
+
+      const scrollTop = scrollEl?.scrollTop ?? 0;
+      const headerHeight = headerRef.current?.offsetHeight ?? 0;
+      // Virtual item offsets are relative to the virtualizer container which
+      // starts after headerContent + the scroll container's top padding (p-4).
+      const containerOffset = headerHeight + 16; // 16px = p-4
+
+      // Total height of the sticky overlay (inner bar).
+      const overlayHeight = stickyRef.current?.offsetHeight ?? 36;
+
+      // Find the last file whose inline header's rounded top corners have
+      // scrolled past the viewport top.  The overlay appears to seamlessly
+      // cover the remaining flat portion of the inline header that is still
+      // visible.  The FileBox container uses rounded-lg (8px border-radius)
+      // plus ~1px border, so we use ~10px as the trigger threshold.
+      const cornerThreshold = 10;
+      let found: number | null = null;
+      for (const item of items) {
+        const rowTop = item.start + containerOffset;
+        if (rowTop + cornerThreshold <= scrollTop) {
+          found = item.index;
+        }
+      }
+
+      if (found !== null) {
+        const group = fileGroups[found];
+        // Where the *next* file row starts (the incoming inline header).
+        const nextStart =
+          found + 1 < fileGroups.length
+            ? (virtualizer.getOffsetForIndex(found + 1, 'start')?.[0] ?? virtualizer.getTotalSize())
+            : virtualizer.getTotalSize();
+        const nextRowTop = nextStart + containerOffset;
+
+        // Distance from the top of the viewport to the incoming header.
+        const distanceToNext = nextRowTop - scrollTop;
+
+        if (distanceToNext <= 0) {
+          // The next file's header is at or above the viewport top —
+          // the current file is fully scrolled out.
+          setStickyFile(null);
+          setStickyOffset(0);
+        } else if (distanceToNext < overlayHeight) {
+          // The incoming header is pushing the overlay upward.
+          setStickyFile(group ?? null);
+          setStickyOffset(distanceToNext - overlayHeight); // negative value
+        } else {
+          // Plenty of room — overlay sits at its natural position.
+          setStickyFile(group ?? null);
+          setStickyOffset(0);
+        }
+      } else {
+        setStickyFile(null);
+        setStickyOffset(0);
+      }
+    }
+
+    scrollEl.addEventListener('scroll', handleScroll, { passive: true });
+    handleScroll();
+    return () => scrollEl.removeEventListener('scroll', handleScroll);
+  }, [virtualizer, fileGroups]);
+
   return (
-    <div ref={parentRef} className="h-full overflow-y-auto bg-surface-page p-4">
-      {headerContent && <div ref={headerRef}>{headerContent}</div>}
-      <div
-        style={{
-          height: `${virtualizer.getTotalSize()}px`,
-          width: '100%',
-          position: 'relative',
-        }}
-      >
-        {virtualizer.getVirtualItems().map((virtualRow) => (
+    <div className="relative h-full overflow-hidden">
+      {/* Sticky overlay — appears when a file header touches the top edge.
+          Matches the inline file header width/style. Slides up when the
+          next file's inline header approaches. */}
+      {stickyFile && (
+        <div
+          className="absolute right-0 left-0 z-30 px-4 pointer-events-none"
+          style={{
+            top: '-10px',
+            transform: stickyOffset < 0 ? `translateY(${stickyOffset}px)` : undefined,
+          }}
+        >
           <div
-            key={virtualRow.key}
-            data-index={virtualRow.index}
-            ref={virtualizer.measureElement}
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              transform: `translateY(${virtualRow.start}px)`,
-              paddingBottom: '16px', // gap between file boxes
-            }}
+            ref={stickyRef}
+            className="pointer-events-auto flex items-center gap-2 rounded-t-lg border border-border-primary bg-surface-secondary px-4 pt-4 pb-2"
           >
-            <FileBox
-              group={fileGroups[virtualRow.index]}
-              departingChunkIds={departingChunkIds}
-              onToggleApproved={onToggleApproved}
-              onChunkDeparted={onChunkDeparted}
-              onAddComment={onAddComment}
-              onReplyComment={onReplyComment}
-              onUpdateComment={onUpdateComment}
-              onDeleteComment={onDeleteComment}
-              onPublishComment={onPublishComment}
-              onResolveThread={onResolveThread}
-              onUnresolveThread={onUnresolveThread}
-            />
+            <span className="font-mono text-xs text-fg-primary font-medium">
+              {stickyFile.filePath}
+            </span>
+            <span className="text-xs text-fg-muted">
+              ({stickyFile.chunks.length} chunk{stickyFile.chunks.length !== 1 ? 's' : ''})
+            </span>
+            {stickyFile.allApproved && (
+              <span className="text-xs text-success-fg">✓ All approved</span>
+            )}
           </div>
-        ))}
+        </div>
+      )}
+
+      <div ref={parentRef} className="h-full overflow-y-auto bg-surface-page p-4">
+        {headerContent && <div ref={headerRef}>{headerContent}</div>}
+        <div
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+            width: '100%',
+            position: 'relative',
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualRow) => (
+            <div
+              key={virtualRow.key}
+              data-index={virtualRow.index}
+              ref={virtualizer.measureElement}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start}px)`,
+                paddingBottom: '16px', // gap between file boxes
+              }}
+            >
+              <FileBox
+                group={fileGroups[virtualRow.index]}
+                wrapLines={wrapLines}
+                departingChunkIds={departingChunkIds}
+                onToggleApproved={onToggleApproved}
+                onChunkDeparted={onChunkDeparted}
+                onAddComment={onAddComment}
+                onReplyComment={onReplyComment}
+                onUpdateComment={onUpdateComment}
+                onDeleteComment={onDeleteComment}
+                onPublishComment={onPublishComment}
+                onResolveThread={onResolveThread}
+                onUnresolveThread={onUnresolveThread}
+              />
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
