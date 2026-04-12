@@ -294,7 +294,7 @@ describe('Database Schema', () => {
       tag.id,
     );
 
-    // Duplicate should be ignored (or conflict)
+    // Duplicate insert should throw due to PRIMARY KEY constraint
     expect(() => {
       db.prepare('INSERT INTO chunk_tags (pr_id, content_hash, tag_id) VALUES (?, ?, ?)').run(
         pr.id,
