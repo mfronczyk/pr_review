@@ -66,15 +66,24 @@ export class ChunkService {
 
     const currentlyApproved = review?.approved === 1;
     const newApproved = currentlyApproved ? 0 : 1;
-    const approvedAt = newApproved ? new Date().toISOString() : null;
 
-    this.db
-      .prepare(
-        `INSERT INTO chunk_reviews (pr_id, content_hash, approved, approved_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT (pr_id, content_hash) DO UPDATE SET approved = ?, approved_at = ?`,
-      )
-      .run(chunk.pr_id, chunk.content_hash, newApproved, approvedAt, newApproved, approvedAt);
+    if (newApproved) {
+      this.db
+        .prepare(
+          `INSERT INTO chunk_reviews (pr_id, content_hash, approved, approved_at)
+           VALUES (?, ?, 1, datetime('now'))
+           ON CONFLICT (pr_id, content_hash) DO UPDATE SET approved = 1, approved_at = datetime('now')`,
+        )
+        .run(chunk.pr_id, chunk.content_hash);
+    } else {
+      this.db
+        .prepare(
+          `INSERT INTO chunk_reviews (pr_id, content_hash, approved, approved_at)
+           VALUES (?, ?, 0, NULL)
+           ON CONFLICT (pr_id, content_hash) DO UPDATE SET approved = 0, approved_at = NULL`,
+        )
+        .run(chunk.pr_id, chunk.content_hash);
+    }
 
     return this.enrichChunk(chunk);
   }
