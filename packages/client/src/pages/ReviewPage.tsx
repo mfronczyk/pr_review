@@ -1149,13 +1149,13 @@ export function ReviewPage(): React.ReactElement {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center text-fg-muted">Loading...</div>
+      <div className="flex h-full items-center justify-center text-fg-muted">Loading...</div>
     );
   }
 
   if (error || !prWithLocalProgress) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-2">
+      <div className="flex h-full flex-col items-center justify-center gap-2">
         <p className="text-red-500">{error ?? 'PR not found'}</p>
         <Link to="/" className="text-sm text-blue-500 hover:underline">
           Back to Dashboard
@@ -1165,7 +1165,7 @@ export function ReviewPage(): React.ReactElement {
   }
 
   return (
-    <div className="flex h-[calc(100vh-49px)]">
+    <div className="flex h-full">
       <Sidebar
         pr={prWithLocalProgress}
         groups={groups}
